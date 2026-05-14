@@ -41,6 +41,17 @@ const statusMeta: Record<
 
 const THEME_STORAGE_KEY = 'subtitle-aligner-theme'
 
+function clampSettingsInt(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, Math.round(value)))
+}
+
+function parseSettingsInt(raw: string, min: number, max: number): number | null {
+  if (raw === '' || raw === '-') return null
+  const n = Number.parseInt(raw, 10)
+  if (!Number.isFinite(n)) return null
+  return clampSettingsInt(n, min, max)
+}
+
 function readStoredTheme(): 'light' | 'dark' {
   try {
     const v = localStorage.getItem(THEME_STORAGE_KEY)
@@ -78,9 +89,9 @@ function createIdleAlignmentSession(total: number): AlignmentSession {
 }
 
 function alignmentStateLabel(phase: AlignmentSession['phase']): string {
-  if (phase === 'idle') return 'Ready'
-  if (phase === 'aligning') return 'Aligning'
-  return 'Complete'
+  if (phase === 'idle') return '就绪'
+  if (phase === 'aligning') return '对齐中'
+  return '已完成'
 }
 
 function subtitlesInCurrentBatch(session: AlignmentSession): number {
@@ -338,7 +349,7 @@ function TopBar({
           disabled={aligning}
           onClick={onOpenAlignment}
         >
-          Start AI Alignment
+          开始 AI 对齐
         </button>
         <span className="toolbar-sep" aria-hidden />
         <button type="button" className="toolbar-btn">
@@ -374,16 +385,16 @@ function TopBar({
         {showLiveMeta ? (
           <>
             <p className="text-primary font-semibold tabular-nums">
-              Batch {alignmentBatchIndex} / {alignmentBatchTotal}
+              第 {alignmentBatchIndex} / {alignmentBatchTotal} 批
             </p>
             <p className="text-secondary mt-0.5 leading-tight tabular-nums">
-              {alignmentMatched} / {alignmentTotal} matched
+              已匹配 {alignmentMatched} / {alignmentTotal}
             </p>
           </>
         ) : (
           <>
-            <p className="text-primary font-semibold">AI alignment</p>
-            <p className="text-secondary mt-0.5 leading-tight">Run from toolbar to begin</p>
+            <p className="text-primary font-semibold">AI 对齐</p>
+            <p className="text-secondary mt-0.5 leading-tight">在工具栏启动对齐即可开始</p>
           </>
         )}
       </div>
@@ -531,9 +542,9 @@ function AlignmentStatus({ settings, session }: { settings: SettingsState; sessi
 
   return (
     <aside className="app-panel alignment-panel flex min-h-0 min-w-0 flex-col overflow-hidden">
-      <div className="app-panel-header alignment-panel__head shrink-0 px-3 py-2.5">
-        <h2 className="ui-section-title">Alignment</h2>
-        <p className="type-caption alignment-monitor-tag mt-1">AI session monitor</p>
+      <div className="app-panel-header alignment-panel__head shrink-0 px-4 py-2.5">
+        <h2 className="ui-section-title">对齐</h2>
+        <p className="type-caption alignment-monitor-tag mt-1">AI 会话监控</p>
         <p className="type-caption mt-1 leading-snug">
           {settings.provider} · <span className="text-secondary">{settings.model}</span>
         </p>
@@ -542,7 +553,7 @@ function AlignmentStatus({ settings, session }: { settings: SettingsState; sessi
       <div className="alignment-panel__body min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
         <div>
           <div className="mb-1 flex items-baseline justify-between gap-2">
-            <span className="type-field-label">Run progress</span>
+            <span className="type-field-label">运行进度</span>
             <span className="type-run-pct tabular-nums">{progressPct}%</span>
           </div>
           <div className="alignment-progress-track">
@@ -551,7 +562,7 @@ function AlignmentStatus({ settings, session }: { settings: SettingsState; sessi
         </div>
 
         <div>
-          <p className="type-field-label mb-1">Current batch</p>
+          <p className="type-field-label mb-1">当前批次</p>
           <p className="type-panel-stat tabular-nums">
             {session.phase === 'idle' || session.batchTotal === 0 ? (
               '—'
@@ -563,14 +574,14 @@ function AlignmentStatus({ settings, session }: { settings: SettingsState; sessi
           </p>
           <p className="type-caption mt-1">
             {session.phase === 'idle' || session.batchTotal === 0
-              ? 'No active batch'
-              : `${inBatch} subtitle${inBatch === 1 ? '' : 's'} in this batch`}
+              ? '暂无运行中的批次'
+              : `本批含 ${inBatch} 条字幕`}
           </p>
         </div>
 
         <div className="metric-stack space-y-3">
-          <Metric label="Matched" value={matchedLine} />
-          <Metric label="State" value={alignmentStateLabel(session.phase)} />
+          <Metric label="已匹配" value={matchedLine} />
+          <Metric label="状态" value={alignmentStateLabel(session.phase)} />
         </div>
       </div>
     </aside>
@@ -741,7 +752,7 @@ function AlignmentWorkflowModal({
   }
 
   const estTokens = estimateApiUsageTokens(draft, subtitleCount)
-  const estLabel = estTokens >= 1000 ? `~${(estTokens / 1000).toFixed(1)}k tokens` : `~${estTokens} tokens`
+  const estLabel = estTokens >= 1000 ? `约 ${(estTokens / 1000).toFixed(1)}k Token` : `约 ${estTokens} Token`
 
   return (
     <div className="modal-backdrop" role="presentation" onClick={handleBackdropClick}>
@@ -754,131 +765,138 @@ function AlignmentWorkflowModal({
         aria-labelledby="alignment-workflow-title"
         onClick={(event) => event.stopPropagation()}
       >
-        <header className="modal-header flex h-14 shrink-0 items-center justify-between px-5">
-          <h2 id="alignment-workflow-title" className="text-primary text-[16px] font-semibold tracking-tight">
-            Start AI Alignment
+        <header className="modal-header shrink-0">
+          <h2 id="alignment-workflow-title" className="min-w-0 flex-1 truncate text-left text-[16px] font-semibold tracking-tight text-primary">
+            开始 AI 对齐
           </h2>
           <button
             type="button"
-            className="text-meta rounded-lg px-2 text-2xl leading-none hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text-primary)]"
+            className="text-meta shrink-0 rounded-lg px-2 text-2xl leading-none hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text-primary)]"
             onClick={onClose}
-            aria-label="Close alignment workflow"
+            aria-label="关闭对齐流程"
           >
             ×
           </button>
         </header>
 
-        <div className="modal-body-scroll min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          <p className="text-secondary mb-4 text-[13px] leading-relaxed">
-            Configure how the model processes your subtitles. Nothing runs until you choose <span className="text-primary font-medium">Run Alignment</span>.
-          </p>
-
-          <div className="space-y-5">
+        <div className="modal-body-scroll min-h-0 flex-1 overflow-y-auto">
+          <div className="modal-section-stack">
+            <p className="text-secondary text-[13px] leading-snug">
+              在此配置模型如何处理字幕。在您点击<span className="text-primary font-medium">「运行对齐」</span>之前，不会发起任何实际任务。
+            </p>
             <section className="settings-section">
-              <h3 className="settings-heading">Model &amp; batches</h3>
+              <h3 className="settings-heading">模型与批次</h3>
               <label className="settings-label">
-                Model
+                模型
                 <select className="settings-select mt-1 w-full" value={draft.model} onChange={(e) => patchDraft({ model: e.currentTarget.value })}>
                   <option>可选模型</option>
                   <option>deepseek-chat</option>
                   <option>deepseek-reasoner</option>
                 </select>
               </label>
-              <label className="settings-label mt-3">
-                Batch size
-                <select
-                  className="settings-select mt-1 w-full"
+              <label className="settings-label mt-2">
+                每批条数
+                <input
+                  type="number"
+                  className="settings-input mt-1 w-full"
+                  min={1}
+                  max={500}
+                  step={1}
                   value={draft.batchSize}
-                  onChange={(e) => patchDraft({ batchSize: Number(e.currentTarget.value) })}
-                >
-                  <option value={8}>8</option>
-                  <option value={12}>12</option>
-                  <option value={16}>16</option>
-                  <option value={20}>20</option>
-                  <option value={24}>24</option>
-                </select>
+                  onChange={(e) => {
+                    const next = parseSettingsInt(e.currentTarget.value, 1, 500)
+                    if (next === null) return
+                    patchDraft({ batchSize: next })
+                  }}
+                />
               </label>
-              <label className="settings-label mt-3">
-                Confidence threshold
-                <select
-                  className="settings-select mt-1 w-full"
-                  value={draft.confidenceThreshold}
-                  onChange={(e) => patchDraft({ confidenceThreshold: Number(e.currentTarget.value) })}
-                >
-                  <option value={60}>60%</option>
-                  <option value={70}>70%</option>
-                  <option value={80}>80%</option>
-                  <option value={90}>90%</option>
-                </select>
+              <label className="settings-label mt-2">
+                置信度阈值
+                <div className="mt-1 flex min-w-0 items-center gap-2">
+                  <input
+                    type="number"
+                    className="settings-input min-w-0 flex-1"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={draft.confidenceThreshold}
+                    onChange={(e) => {
+                      const next = parseSettingsInt(e.currentTarget.value, 0, 100)
+                      if (next === null) return
+                      patchDraft({ confidenceThreshold: next })
+                    }}
+                  />
+                  <span className="text-meta shrink-0 text-[13px] font-medium">%</span>
+                </div>
               </label>
             </section>
 
             <section className="settings-section">
-              <h3 className="settings-heading">Alignment mode</h3>
-              <p className="settings-label">How lines are matched to the script</p>
+              <h3 className="settings-heading">对齐模式</h3>
+              <p className="settings-label">字幕行与脚本的匹配方式</p>
               <div className="mt-2 grid grid-cols-2 gap-2">
                 <RadioCard
                   checked={draft.mode === 'sequential'}
-                  label="Sequential"
+                  label="顺序匹配"
                   name="alignment-mode"
                   onChange={() => patchDraft({ mode: 'sequential' })}
                 />
                 <RadioCard
                   checked={draft.mode === 'semanticHybrid'}
-                  label="Semantic hybrid"
+                  label="语义混合"
                   name="alignment-mode"
                   onChange={() => patchDraft({ mode: 'semanticHybrid' })}
                 />
               </div>
-              <p className="settings-label mt-4">Semantic match strength</p>
+              <p className="settings-label mt-3">语义匹配强度</p>
               <div className="mt-2 grid grid-cols-3 gap-2">
                 <RadioCard
                   checked={draft.semanticStrength === 'low'}
-                  label="Low"
+                  label="低"
                   name="semantic-strength"
                   onChange={() => patchDraft({ semanticStrength: 'low' })}
                 />
                 <RadioCard
                   checked={draft.semanticStrength === 'medium'}
-                  label="Med"
+                  label="中"
                   name="semantic-strength"
                   onChange={() => patchDraft({ semanticStrength: 'medium' })}
                 />
                 <RadioCard
                   checked={draft.semanticStrength === 'high'}
-                  label="High"
+                  label="高"
                   name="semantic-strength"
                   onChange={() => patchDraft({ semanticStrength: 'high' })}
                 />
               </div>
-              <div className="mt-4">
-                <Toggle checked={draft.retryFailed} label="Retry failed matches" onChange={() => patchDraft({ retryFailed: !draft.retryFailed })} />
+              <div className="mt-3">
+                <Toggle checked={draft.retryFailed} label="失败项自动重试" onChange={() => patchDraft({ retryFailed: !draft.retryFailed })} />
               </div>
             </section>
 
             <section className="settings-section">
-              <h3 className="settings-heading">Estimates</h3>
-              <div className="grid grid-cols-2 gap-3">
+              <h3 className="settings-heading">预估</h3>
+              <div className="grid grid-cols-2 gap-2">
                 <div className="metric-card">
-                  <p className="type-field-label mb-1">Subtitle count</p>
+                  <p className="type-field-label mb-1">字幕条数</p>
                   <p className="type-panel-stat tabular-nums">{subtitleCount}</p>
                 </div>
                 <div className="metric-card">
-                  <p className="type-field-label mb-1">Est. API usage</p>
+                  <p className="type-field-label mb-1">预估 API 用量</p>
                   <p className="type-panel-stat tabular-nums">{estLabel}</p>
-                  <p className="type-caption mt-1">Heuristic before billing</p>
+                  <p className="type-caption mt-1">仅供参考，非计费依据</p>
                 </div>
               </div>
             </section>
           </div>
         </div>
 
-        <footer className="modal-footer flex shrink-0 flex-wrap items-center justify-end gap-3 px-5 py-4">
+        <footer className="modal-footer shrink-0">
           <button type="button" className="settings-footer-button btn-secondary-solid" onClick={onClose}>
-            Cancel
+            取消
           </button>
           <button type="button" className="settings-footer-button btn-accent-solid" onClick={() => onRun(draft)}>
-            Run Alignment
+            运行对齐
           </button>
         </footer>
       </div>
@@ -928,13 +946,13 @@ function SettingsModal({
         aria-labelledby="settings-modal-title"
         onClick={(event) => event.stopPropagation()}
       >
-        <header className="modal-header flex h-14 shrink-0 items-center justify-between px-5">
-          <h2 id="settings-modal-title" className="text-primary text-[16px] font-semibold tracking-tight">
+        <header className="modal-header shrink-0">
+          <h2 id="settings-modal-title" className="min-w-0 flex-1 truncate text-left text-[16px] font-semibold tracking-tight text-primary">
             设置
           </h2>
           <button
             type="button"
-            className="text-meta rounded-lg px-2 text-2xl leading-none hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text-primary)]"
+            className="text-meta shrink-0 rounded-lg px-2 text-2xl leading-none hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text-primary)]"
             onClick={onClose}
             aria-label="关闭设置"
           >
@@ -942,11 +960,11 @@ function SettingsModal({
           </button>
         </header>
 
-        <div className="modal-body-scroll min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <div className="modal-body-scroll min-h-0 flex-1 overflow-y-auto">
           <SettingsContent settings={settings} onUpdate={update} />
         </div>
 
-        <footer className="modal-footer flex shrink-0 justify-end gap-3 px-5 py-4">
+        <footer className="modal-footer shrink-0">
           <button type="button" className="settings-footer-button btn-secondary-solid" onClick={onClose}>
             退出
           </button>
@@ -967,7 +985,7 @@ function SettingsContent({
   onUpdate: (patch: Partial<SettingsState>) => void
 }): JSX.Element {
   return (
-    <div className="space-y-5">
+    <div className="modal-section-stack">
       <section className="settings-section">
         <h3 className="settings-heading">API 密钥</h3>
         <FieldRow label="服务商">
@@ -975,7 +993,7 @@ function SettingsContent({
             <option>Deepseek</option>
           </select>
         </FieldRow>
-        <div className="mt-3 flex">
+        <div className="mt-2 flex">
           <input
             className="settings-input rounded-r-none"
             placeholder="请输入 API Key"
@@ -987,7 +1005,7 @@ function SettingsContent({
             粘贴
           </button>
         </div>
-        <button type="button" className="btn-accent-ghost mt-3 px-3 py-2 text-sm font-semibold">
+        <button type="button" className="btn-accent-ghost mt-2 px-3 py-2 text-sm font-semibold">
           连接测试
         </button>
       </section>
@@ -1001,29 +1019,42 @@ function SettingsContent({
             <option>deepseek-chat</option>
           </select>
         </label>
-        <label className="settings-label mt-3">
+        <label className="settings-label mt-2">
           每批条数
-          <select
-            className="settings-select mt-1 w-full"
+          <input
+            type="number"
+            className="settings-input mt-1 w-full"
+            min={1}
+            max={500}
+            step={1}
             value={settings.batchSize}
-            onChange={(event) => onUpdate({ batchSize: Number(event.currentTarget.value) })}
-          >
-            <option value={20}>20</option>
-            <option value={12}>12</option>
-          </select>
+            onChange={(event) => {
+              const next = parseSettingsInt(event.currentTarget.value, 1, 500)
+              if (next === null) return
+              onUpdate({ batchSize: next })
+            }}
+          />
         </label>
-        <label className="settings-label mt-3">
+        <label className="settings-label mt-2">
           置信度阈值
-          <select
-            className="settings-select mt-1 w-full"
-            value={settings.confidenceThreshold}
-            onChange={(event) => onUpdate({ confidenceThreshold: Number(event.currentTarget.value) })}
-          >
-            <option value={70}>70%</option>
-            <option value={80}>80%</option>
-          </select>
+          <div className="mt-1 flex min-w-0 items-center gap-2">
+            <input
+              type="number"
+              className="settings-input min-w-0 flex-1"
+              min={0}
+              max={100}
+              step={1}
+              value={settings.confidenceThreshold}
+              onChange={(event) => {
+                const next = parseSettingsInt(event.currentTarget.value, 0, 100)
+                if (next === null) return
+                onUpdate({ confidenceThreshold: next })
+              }}
+            />
+            <span className="text-meta shrink-0 text-[13px] font-medium">%</span>
+          </div>
         </label>
-        <div className="mt-4">
+        <div className="mt-3">
           <Toggle
             checked={settings.autoMarkHighConfidence}
             label="高置信度自动标记"
@@ -1049,13 +1080,13 @@ function SettingsContent({
             onChange={() => onUpdate({ subtitleOrder: 'englishFirst' })}
           />
         </div>
-        <label className="settings-label mt-3">
+        <label className="settings-label mt-2">
           导出格式
           <select className="settings-select mt-1 w-full" value={settings.exportFormat} onChange={() => onUpdate({ exportFormat: '.srt' })}>
             <option>.srt</option>
           </select>
         </label>
-        <div className="mt-4">
+        <div className="mt-3">
           <Toggle
             checked={settings.separateLines}
             label="中英文分行显示"
@@ -1071,16 +1102,21 @@ function SettingsContent({
           <RadioCard checked={settings.theme === 'light'} label="浅色" name="theme" onChange={() => onUpdate({ theme: 'light' })} />
           <RadioCard checked={settings.theme === 'dark'} label="深色" name="theme" onChange={() => onUpdate({ theme: 'dark' })} />
         </div>
-        <label className="settings-label mt-3">
+        <label className="settings-label mt-2">
           字号
-          <select
-            className="settings-select mt-1 w-full"
+          <input
+            type="number"
+            className="settings-input mt-1 w-full"
+            min={10}
+            max={40}
+            step={1}
             value={settings.fontSize}
-            onChange={(event) => onUpdate({ fontSize: Number(event.currentTarget.value) })}
-          >
-            <option value={14}>14</option>
-            <option value={16}>16</option>
-          </select>
+            onChange={(event) => {
+              const next = parseSettingsInt(event.currentTarget.value, 10, 40)
+              if (next === null) return
+              onUpdate({ fontSize: next })
+            }}
+          />
         </label>
       </section>
     </div>
@@ -1089,7 +1125,7 @@ function SettingsContent({
 
 function FieldRow({ label, children }: { label: string; children: ReactNode }): JSX.Element {
   return (
-    <label className="settings-label grid grid-cols-[minmax(5.5rem,7.5rem)_minmax(0,1fr)] items-center gap-3">
+    <label className="settings-label grid grid-cols-[minmax(4.5rem,6rem)_minmax(0,1fr)] items-center gap-2">
       <span className="text-meta">{label}</span>
       {children}
     </label>

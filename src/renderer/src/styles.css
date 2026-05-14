@@ -975,11 +975,59 @@
   }
 
   .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    min-height: 52px;
+    padding: 0 var(--modal-pad);
     border-bottom: 1px solid var(--color-border);
   }
 
   .modal-footer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    padding: 12px var(--modal-pad);
     border-top: 1px solid var(--color-border);
+  }
+
+  .modal-body-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: var(--modal-body-pad-y) var(--modal-pad);
+  }
+
+  .modal-section-stack {
+    display: flex;
+    flex-direction: column;
+    gap: var(--modal-section-gap);
+  }
+
+  .modal-dialog {
+    --modal-pad: 20px;
+    --modal-body-pad-y: 12px;
+    --modal-section-gap: 14px;
+    --modal-section-inner-pad: 16px;
+    position: relative;
+    display: flex;
+    width: min(92vw, 780px);
+    max-height: 85vh;
+    flex-direction: column;
+    overflow: hidden;
+    border-radius: 16px;
+    border: 1px solid var(--color-surface-outline);
+    background: var(--color-bg-panel);
+    color: var(--color-text-primary);
+    box-shadow: var(--shadow-surface-card);
+    outline: none;
+  }
+
+  .modal-dialog--workflow {
+    width: min(94vw, 920px);
   }
 
   .problems-panel {
@@ -1017,37 +1065,17 @@
     backdrop-filter: blur(6px);
   }
 
-  .modal-dialog {
-    position: relative;
-    display: flex;
-    width: 100%;
-    max-width: 520px;
-    max-height: 85vh;
-    flex-direction: column;
-    overflow: hidden;
-    border-radius: 16px;
-    border: 1px solid var(--color-surface-outline);
-    background: var(--color-bg-panel);
-    color: var(--color-text-primary);
-    box-shadow: var(--shadow-surface-card);
-    outline: none;
-  }
-
-  .modal-dialog--workflow {
-    max-width: 640px;
-  }
-
   .settings-section {
     border: 1px solid var(--color-border-subtle);
-    border-radius: 16px;
+    border-radius: 12px;
     background: var(--color-bg-elevated);
-    padding: 16px;
+    padding: var(--modal-section-inner-pad, 16px);
   }
 
   .settings-heading {
-    margin-bottom: 12px;
+    margin-bottom: 8px;
     color: var(--color-text-primary);
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
     line-height: 1.25;
     letter-spacing: -0.01em;
@@ -1071,9 +1099,30 @@
     outline: none;
   }
 
+  .settings-select {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    padding-right: 36px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 16px 16px;
+  }
+
   .settings-input {
     min-width: 0;
     flex: 1;
+  }
+
+  .settings-input[type="number"] {
+    -moz-appearance: textfield;
+  }
+
+  .settings-input[type="number"]::-webkit-inner-spin-button,
+  .settings-input[type="number"]::-webkit-outer-spin-button {
+    margin: 0;
+    -webkit-appearance: none;
   }
 
   .settings-select:focus,
@@ -1133,9 +1182,9 @@
     align-items: center;
     justify-content: center;
     border: 1px solid var(--color-border);
-    border-radius: 12px;
+    border-radius: 10px;
     background: var(--color-bg-app);
-    padding: 10px;
+    padding: 8px 10px;
     color: var(--color-text-primary);
     font-size: 13px;
     font-weight: 500;
@@ -1163,9 +1212,9 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 14px;
-    padding: 6px 0;
-    min-height: 32px;
+    gap: 12px;
+    padding: 4px 0;
+    min-height: 30px;
   }
 
   .setting-toggle__label {
