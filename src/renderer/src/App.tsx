@@ -387,6 +387,15 @@ function Metric({ label, value }: { label: string; value: string }): JSX.Element
   )
 }
 
+function PauseGlyph(): JSX.Element {
+  return (
+    <svg className="transport-tower__pause-icon" viewBox="0 0 24 24" width={18} height={18} aria-hidden>
+      <rect x="6" y="5" width="4" height="14" rx="1.25" ry="1.25" fill="currentColor" />
+      <rect x="14" y="5" width="4" height="14" rx="1.25" ry="1.25" fill="currentColor" />
+    </svg>
+  )
+}
+
 function TimelineSimulator({
   currentTimeMs,
   durationMs,
@@ -406,12 +415,38 @@ function TimelineSimulator({
 }): JSX.Element {
   return (
     <section className="timeline-dock grid min-h-0 min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_minmax(8.5rem,0.4fr)] gap-3 px-3 py-2 sm:gap-4 sm:px-4">
-      <div className="grid min-h-0 min-w-0 grid-cols-[minmax(4.5rem,6.5rem)_minmax(0,1fr)] gap-3 sm:gap-4">
-        <div className="transport-shelf flex items-center gap-1.5 p-2">
-          <button type="button" className="media-button-primary" aria-label={isPlaying ? 'Pause simulator' : 'Play simulator'} onClick={onPlayToggle}>
-            {isPlaying ? 'Ⅱ' : '▶'}
+      <div className="grid min-h-0 min-w-0 grid-cols-[minmax(5.5rem,6.75rem)_minmax(0,1fr)] items-stretch gap-3 sm:gap-4">
+        <div className="transport-tower">
+          <button
+            type="button"
+            className="transport-tower__play"
+            aria-label={isPlaying ? '暂停' : '播放'}
+            onClick={onPlayToggle}
+          >
+            {isPlaying ? <PauseGlyph /> : '▶'}
           </button>
-          <button type="button" className="media-button" aria-label="Stop simulator" onClick={onStop}>
+          <div className="transport-tower__shuttle" role="group" aria-label="时间轴快进快退">
+            <button
+              type="button"
+              className="transport-tower__nudge"
+              aria-label="后退 5 秒"
+              onClick={() => onSeek(Math.max(0, currentTimeMs - 5000))}
+            >
+              ◀
+            </button>
+            <span className="transport-tower__shuttle-glyph" aria-hidden>
+              ↔
+            </span>
+            <button
+              type="button"
+              className="transport-tower__nudge"
+              aria-label="前进 5 秒"
+              onClick={() => onSeek(Math.min(durationMs, currentTimeMs + 5000))}
+            >
+              ▶
+            </button>
+          </div>
+          <button type="button" className="transport-tower__stop" aria-label="停止并重置到开头" onClick={onStop}>
             ■
           </button>
         </div>

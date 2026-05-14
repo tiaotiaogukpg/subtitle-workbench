@@ -732,6 +732,128 @@
     box-shadow: var(--shadow-ring);
   }
 
+  .transport-tower {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 12px 8px;
+    border-radius: 10px;
+    background: rgba(30, 41, 59, 0.55);
+    box-shadow: var(--shadow-ring);
+  }
+
+  .transport-tower__play {
+    display: inline-flex;
+    flex-shrink: 0;
+    width: 52px;
+    height: 52px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    border: none;
+    background: linear-gradient(180deg, #7dd3fc, var(--color-accent));
+    color: #0f172a;
+    font-size: 19px;
+    font-weight: 800;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow: var(--shadow-ring-accent), 0 8px 24px var(--color-accent-glow);
+    transition:
+      background-color 140ms ease,
+      transform 140ms ease,
+      box-shadow 140ms ease,
+      filter 140ms ease;
+  }
+
+  .transport-tower__play:hover {
+    filter: brightness(1.06);
+    transform: translateY(-1px);
+  }
+
+  .transport-tower__play:active {
+    transform: translateY(0);
+  }
+
+  .transport-tower__pause-icon {
+    display: block;
+    flex-shrink: 0;
+  }
+
+  .transport-tower__shuttle {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+  }
+
+  .transport-tower__nudge {
+    display: inline-flex;
+    width: 30px;
+    height: 30px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    border: none;
+    background: rgba(15, 23, 42, 0.72);
+    color: var(--color-text-secondary);
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow: var(--shadow-ring);
+    transition:
+      background-color 140ms ease,
+      color 140ms ease,
+      box-shadow 140ms ease;
+  }
+
+  .transport-tower__nudge:hover {
+    background: rgba(51, 65, 85, 0.95);
+    color: var(--color-text-primary);
+    box-shadow: var(--shadow-ring-accent);
+  }
+
+  .transport-tower__shuttle-glyph {
+    padding: 0 1px;
+    color: var(--color-text-meta);
+    font-size: 15px;
+    line-height: 1;
+    opacity: 0.88;
+    user-select: none;
+  }
+
+  .transport-tower__stop {
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    border: none;
+    background: rgba(15, 23, 42, 0.55);
+    color: var(--color-text-meta);
+    font-size: 10px;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow: var(--shadow-ring);
+    transition:
+      background-color 140ms ease,
+      color 140ms ease,
+      box-shadow 140ms ease;
+  }
+
+  .transport-tower__stop:hover {
+    background: rgba(51, 65, 85, 0.9);
+    color: var(--color-text-primary);
+    box-shadow: var(--shadow-ring-accent);
+  }
+
   .playback-shell {
     border-radius: 10px;
     border: none;
