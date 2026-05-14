@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useId, useRef, useState, type ChangeEvent, type JSX, type MouseEvent, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { parseSrt } from './lib/srtParser'
+import { parseMixedTranscript } from './lib/mixedTranscriptParser'
+import { EnglishScriptPoolPanel } from './components/EnglishScriptPoolPanel'
+import { VerticalStackSplitter } from './components/VerticalStackSplitter'
+import { useScriptPoolStore } from './store/scriptPoolStore'
 import { selectCurrentSubtitle, useSubtitleStore } from './store/subtitleStore'
 import type {
   AlignmentSession,
@@ -125,6 +129,7 @@ function App(): JSX.Element {
   const subtitles = useSubtitleStore((s) => s.subtitles)
   const selectSubtitle = useSubtitleStore((s) => s.selectSubtitle)
   const chineseSrtInputRef = useRef<HTMLInputElement>(null)
+  const englishTxtInputRef = useRef<HTMLInputElement>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settings, setSettings] = useState<SettingsState>(() => ({
     ...defaultSettings,
@@ -234,6 +239,29 @@ function App(): JSX.Element {
     []
   )
 
+  const handleEnglishTxtFileChange = useCallback(async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const input = event.currentTarget
+    const file = input.files?.[0]
+    input.value = ''
+    if (!file) return
+    const lower = file.name.toLowerCase()
+    if (!lower.endsWith('.txt')) {
+      window.alert('当前仅支持导入 .txt 英文原稿。')
+      return
+    }
+    try {
+      const raw = await file.text()
+      const segments = parseMixedTranscript(raw)
+      useScriptPoolStore.getState().setSegments(segments)
+      if (segments.length === 0) {
+        window.alert('文件内容为空，或未切分出任何句子。')
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      window.alert(`无法导入英文文稿：${msg}`)
+    }
+  }, [])
+
   const closeAlignmentModal = useCallback(() => {
     setAlignmentModalOpen(false)
   }, [])
@@ -269,8 +297,10 @@ function App(): JSX.Element {
           alignmentPhase={alignmentSession.phase}
           alignmentTotal={alignmentSession.total}
           chineseSrtInputRef={chineseSrtInputRef}
+          englishTxtInputRef={englishTxtInputRef}
           settingsOpen={settingsOpen}
           onChineseSrtFileChange={handleChineseSrtFileChange}
+          onEnglishTxtFileChange={handleEnglishTxtFileChange}
           onOpenAlignment={openAlignmentModal}
           onOpenSettings={openSettings}
         />
@@ -280,7 +310,12 @@ function App(): JSX.Element {
 
           <AlignmentWorkspace />
 
-          <AlignmentStatus session={alignmentSession} settings={settings} />
+          <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
+            <VerticalStackSplitter
+              top={<AlignmentStatus session={alignmentSession} settings={settings} />}
+              bottom={<EnglishScriptPoolPanel />}
+            />
+          </div>
         </section>
 
         <TimelineSimulator
@@ -328,7 +363,9 @@ function TopBar({
   alignmentMatched,
   alignmentTotal,
   chineseSrtInputRef,
-  onChineseSrtFileChange
+  englishTxtInputRef,
+  onChineseSrtFileChange,
+  onEnglishTxtFileChange
 }: {
   settingsOpen: boolean
   onOpenSettings: () => void
@@ -339,7 +376,9 @@ function TopBar({
   alignmentMatched: number
   alignmentTotal: number
   chineseSrtInputRef: RefObject<HTMLInputElement | null>
+  englishTxtInputRef: RefObject<HTMLInputElement | null>
   onChineseSrtFileChange: (event: ChangeEvent<HTMLInputElement>) => void
+  onEnglishTxtFileChange: (event: ChangeEvent<HTMLInputElement>) => void
 }): JSX.Element {
   const aligning = alignmentPhase === 'aligning'
   const showLiveMeta = alignmentPhase === 'aligning' || alignmentPhase === 'complete'
@@ -368,7 +407,16 @@ function TopBar({
         <button type="button" className="toolbar-btn" onClick={() => chineseSrtInputRef.current?.click()}>
           导入中文 SRT
         </button>
-        <button type="button" className="toolbar-btn">
+        <input
+          ref={englishTxtInputRef}
+          accept=".txt,text/plain"
+          className="sr-only"
+          tabIndex={-1}
+          type="file"
+          aria-hidden
+          onChange={onEnglishTxtFileChange}
+        />
+        <button type="button" className="toolbar-btn" onClick={() => englishTxtInputRef.current?.click()}>
           导入英文文稿
         </button>
         <button type="button" className="toolbar-btn">
