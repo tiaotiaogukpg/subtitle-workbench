@@ -6,6 +6,7 @@ import { simulateAlignment } from './lib/fakeAlignmentEngine'
 import { parseMixedTranscript } from './lib/mixedTranscriptParser'
 import { EnglishScriptPoolPanel } from './components/EnglishScriptPoolPanel'
 import { VerticalStackSplitter } from './components/VerticalStackSplitter'
+import { useHistoryStore } from './store/historyStore'
 import { useScriptPoolStore } from './store/scriptPoolStore'
 import { selectCurrentSubtitle, useSubtitleStore } from './store/subtitleStore'
 import type {
@@ -198,6 +199,31 @@ function App(): JSX.Element {
     if (activeId != null) selectSubtitle(activeId)
   }, [activeId, selectSubtitle])
 
+  useEffect(() => {
+    if (alignmentSession.phase === 'aligning') return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      const el = event.target
+      if (
+        el instanceof HTMLTextAreaElement ||
+        el instanceof HTMLInputElement ||
+        (el instanceof HTMLElement && el.isContentEditable)
+      ) {
+        return
+      }
+      if (!event.ctrlKey || event.altKey || event.metaKey) return
+      if (event.shiftKey) return
+      if (event.key === 'z' || event.key === 'Z') {
+        event.preventDefault()
+        useHistoryStore.getState().undo()
+      } else if (event.key === 'y' || event.key === 'Y') {
+        event.preventDefault()
+        useHistoryStore.getState().redo()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [alignmentSession.phase])
+
   const openSettings = useCallback(() => {
     setSettingsOpen(true)
   }, [])
@@ -217,6 +243,7 @@ function App(): JSX.Element {
       input.value = ''
       if (!file) return
       try {
+        useHistoryStore.getState().clearUndoHistory()
         const raw = await file.text()
         const parsed = parseSrt(raw)
         const store = useSubtitleStore.getState()
@@ -383,6 +410,10 @@ function TopBar({
 }): JSX.Element {
   const aligning = alignmentPhase === 'aligning'
   const showLiveMeta = alignmentPhase === 'aligning' || alignmentPhase === 'complete'
+  const canUndo = useHistoryStore((s) => s.undoStack.length > 0)
+  const canRedo = useHistoryStore((s) => s.redoStack.length > 0)
+  const undo = useHistoryStore((s) => s.undo)
+  const redo = useHistoryStore((s) => s.redo)
 
   return (
     <header className="app-toolbar">
@@ -431,12 +462,24 @@ function TopBar({
           设置
         </button>
         <span className="toolbar-sep" aria-hidden />
-        <button type="button" className="toolbar-btn toolbar-btn--icon" aria-label="撤销">
+        <button
+          type="button"
+          className="toolbar-btn toolbar-btn--icon"
+          aria-label="撤销"
+          disabled={aligning || !canUndo}
+          onClick={() => undo()}
+        >
           <span className="toolbar-btn__glyph" aria-hidden>
             ↶
           </span>
         </button>
-        <button type="button" className="toolbar-btn toolbar-btn--icon" aria-label="重做">
+        <button
+          type="button"
+          className="toolbar-btn toolbar-btn--icon"
+          aria-label="重做"
+          disabled={aligning || !canRedo}
+          onClick={() => redo()}
+        >
           <span className="toolbar-btn__glyph" aria-hidden>
             ↷
           </span>
@@ -531,6 +574,8 @@ function AlignmentWorkspace(): JSX.Element {
   const updateSubtitle = useSubtitleStore((s) => s.updateSubtitle)
   const replaceEnglish = useSubtitleStore((s) => s.replaceEnglish)
   const updateConfidence = useSubtitleStore((s) => s.updateConfidence)
+  const chineseEditStartRef = useRef<{ subtitleId: number; text: string } | null>(null)
+  const englishEditStartRef = useRef<{ subtitleId: number; text: string } | null>(null)
 
   if (!selected) {
     return (
@@ -578,8 +623,28 @@ function AlignmentWorkspace(): JSX.Element {
         <label className="block">
           <span className="type-field-label mb-1.5 block">Chinese Subtitle</span>
           <textarea
+            key={`zh-${line.id}`}
             className="subtitle-editor subtitle-editor--dense"
+            data-subtitle-id={line.id}
             value={line.chinese}
+            onFocus={() => {
+              chineseEditStartRef.current = { subtitleId: line.id, text: line.chinese }
+            }}
+            onBlur={(event) => {
+              const fieldLineId = Number(event.currentTarget.dataset.subtitleId)
+              const start = chineseEditStartRef.current
+              if (!start || start.subtitleId !== fieldLineId) return
+              chineseEditStartRef.current = null
+              const after = event.currentTarget.value
+              if (start.text !== after) {
+                useHistoryStore.getState().recordTextEditIfChanged({
+                  subtitleId: start.subtitleId,
+                  field: 'chinese',
+                  before: start.text,
+                  after
+                })
+              }
+            }}
             onChange={(event) =>
               updateSubtitle(line.id, {
                 chinese: event.currentTarget.value,
@@ -593,8 +658,28 @@ function AlignmentWorkspace(): JSX.Element {
         <label className="block">
           <span className="type-field-label mb-1.5 block">English Subtitle</span>
           <textarea
+            key={`en-${line.id}`}
             className="subtitle-editor subtitle-editor--dense"
+            data-subtitle-id={line.id}
             value={line.english}
+            onFocus={() => {
+              englishEditStartRef.current = { subtitleId: line.id, text: line.english }
+            }}
+            onBlur={(event) => {
+              const fieldLineId = Number(event.currentTarget.dataset.subtitleId)
+              const start = englishEditStartRef.current
+              if (!start || start.subtitleId !== fieldLineId) return
+              englishEditStartRef.current = null
+              const after = event.currentTarget.value
+              if (start.text !== after) {
+                useHistoryStore.getState().recordTextEditIfChanged({
+                  subtitleId: start.subtitleId,
+                  field: 'english',
+                  before: start.text,
+                  after
+                })
+              }
+            }}
             onChange={(event) =>
               updateSubtitle(line.id, {
                 english: event.currentTarget.value,
