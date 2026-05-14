@@ -15,6 +15,7 @@ import type {
   SettingsState,
   SubtitleStatus
 } from './types'
+import { DEFAULT_USER_SETTINGS } from '../../shared/settingsDefaults'
 
 const statusMeta: Record<
   SubtitleStatus,
@@ -69,19 +70,7 @@ function readStoredTheme(): 'light' | 'dark' {
   return 'dark'
 }
 
-const defaultSettings: SettingsState = {
-  provider: 'Deepseek',
-  apiKey: '',
-  model: '可选模型',
-  batchSize: 20,
-  confidenceThreshold: 70,
-  autoMarkHighConfidence: true,
-  subtitleOrder: 'chineseFirst',
-  exportFormat: '.srt',
-  separateLines: true,
-  theme: 'dark',
-  fontSize: 14
-}
+const defaultSettings: SettingsState = { ...DEFAULT_USER_SETTINGS }
 
 function createIdleAlignmentSession(total: number): AlignmentSession {
   return {
@@ -161,11 +150,6 @@ function App(): JSX.Element {
 
   useLayoutEffect(() => {
     document.documentElement.dataset.theme = settings.theme
-    try {
-      localStorage.setItem(THEME_STORAGE_KEY, settings.theme)
-    } catch {
-      /* ignore */
-    }
   }, [settings.theme])
 
   useEffect(() => {
@@ -177,6 +161,18 @@ function App(): JSX.Element {
       alignmentRunRef.current?.cancel()
       alignmentRunRef.current = null
     }
+  }, [])
+
+  useEffect(() => {
+    const bridge = window.bilingualSubtitleAligner
+    if (!bridge?.getUserSettings) return
+    void bridge.getUserSettings().then(({ settings: loaded, loadedFromDisk }) => {
+      setSettings({
+        ...defaultSettings,
+        ...loaded,
+        ...(!loadedFromDisk ? { theme: readStoredTheme() } : {})
+      })
+    })
   }, [])
 
   const activeSubtitle = subtitles.find((subtitle) => currentTimeMs >= subtitle.start && currentTimeMs <= subtitle.end)
@@ -1195,7 +1191,20 @@ function SettingsModal({
           <button type="button" className="settings-footer-button btn-secondary-solid" onClick={onClose}>
             退出
           </button>
-          <button type="button" className="settings-footer-button btn-accent-solid" onClick={onClose}>
+          <button
+            type="button"
+            className="settings-footer-button btn-accent-solid"
+            onClick={() => {
+              void (async () => {
+                try {
+                  await window.bilingualSubtitleAligner?.setUserSettings?.(settings)
+                } catch {
+                  /* ignore persist errors */
+                }
+                onClose()
+              })()
+            }}
+          >
             保存并应用
           </button>
         </footer>
@@ -1204,6 +1213,12 @@ function SettingsModal({
   )
 }
 
+type DeepSeekTestUiState =
+  | { phase: 'idle' }
+  | { phase: 'testing' }
+  | { phase: 'connected' }
+  | { phase: 'failed'; message: string }
+
 function SettingsContent({
   settings,
   onUpdate
@@ -1211,6 +1226,41 @@ function SettingsContent({
   settings: SettingsState
   onUpdate: (patch: Partial<SettingsState>) => void
 }): JSX.Element {
+  const [deepSeekTest, setDeepSeekTest] = useState<DeepSeekTestUiState>({ phase: 'idle' })
+
+  async function handleTestDeepSeekConnection(): Promise<void> {
+    const bridge = window.bilingualSubtitleAligner
+    if (!bridge?.testDeepSeekConnection) {
+      setDeepSeekTest({ phase: 'failed', message: 'Connection test is only available in the desktop app.' })
+      return
+    }
+    if (!settings.apiKey.trim()) {
+      setDeepSeekTest({ phase: 'failed', message: 'Please enter DeepSeek API Key.' })
+      return
+    }
+    setDeepSeekTest({ phase: 'testing' })
+    try {
+      const result = await bridge.testDeepSeekConnection(settings.apiKey, settings.model)
+      if (result.ok) setDeepSeekTest({ phase: 'connected' })
+      else setDeepSeekTest({ phase: 'failed', message: result.error })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setDeepSeekTest({ phase: 'failed', message: msg })
+    }
+  }
+
+  async function handlePasteApiKey(): Promise<void> {
+    try {
+      const bridge = window.bilingualSubtitleAligner
+      const text = bridge?.readClipboardText
+        ? await bridge.readClipboardText()
+        : await navigator.clipboard.readText()
+      onUpdate({ apiKey: text.trim() })
+    } catch {
+      window.alert('无法读取剪贴板，请检查权限或在本框内使用 Ctrl+V 粘贴。')
+    }
+  }
+
   return (
     <div className="modal-section-stack">
       <section className="settings-section">
@@ -1228,13 +1278,29 @@ function SettingsContent({
             value={settings.apiKey}
             onChange={(event) => onUpdate({ apiKey: event.currentTarget.value })}
           />
-          <button type="button" className="btn-paste">
+          <button type="button" className="btn-paste" onClick={() => void handlePasteApiKey()}>
             粘贴
           </button>
         </div>
-        <button type="button" className="btn-accent-ghost mt-2 px-3 py-2 text-sm font-semibold">
-          连接测试
-        </button>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="btn-accent-ghost px-3 py-2 text-sm font-semibold"
+            disabled={deepSeekTest.phase === 'testing'}
+            onClick={() => void handleTestDeepSeekConnection()}
+          >
+            Test Connection
+          </button>
+        </div>
+        {deepSeekTest.phase === 'testing' ? (
+          <p className="type-caption mt-2 text-[var(--color-text-secondary)]">Testing...</p>
+        ) : null}
+        {deepSeekTest.phase === 'connected' ? (
+          <p className="type-caption mt-2 font-medium text-emerald-600 dark:text-emerald-400">Connected</p>
+        ) : null}
+        {deepSeekTest.phase === 'failed' ? (
+          <p className="type-caption mt-2 text-red-600 dark:text-red-400">Failed: {deepSeekTest.message}</p>
+        ) : null}
       </section>
 
       <section className="settings-section">

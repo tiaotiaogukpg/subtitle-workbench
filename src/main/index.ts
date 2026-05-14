@@ -1,5 +1,23 @@
-import { app, BrowserWindow, Menu, nativeTheme, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, clipboard, ipcMain, Menu, nativeTheme, type MenuItemConstructorOptions } from 'electron'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { registerDeepSeekIpc } from './deepseekIpc'
+import { registerUserSettingsIpc } from './settingsIpc'
+
+/** electron-vite 产出为 `index.mjs`，旧路径 `index.js` 会导致 preload 未加载、桥接 API 不存在。 */
+function resolvePreloadPath(): string {
+  const dir = join(__dirname, '../preload')
+  const mjs = join(dir, 'index.mjs')
+  const js = join(dir, 'index.js')
+  if (existsSync(mjs)) return mjs
+  if (existsSync(js)) return js
+  return mjs
+}
+
+function registerClipboardIpc(): void {
+  ipcMain.removeHandler('clipboard:readText')
+  ipcMain.handle('clipboard:readText', () => clipboard.readText())
+}
 
 function buildApplicationMenu(): Menu {
   const darwin = process.platform === 'darwin'
@@ -41,7 +59,7 @@ function createWindow(): void {
     backgroundColor: '#111827',
     autoHideMenuBar: true,
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
+      preload: resolvePreloadPath(),
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false
@@ -58,6 +76,10 @@ function createWindow(): void {
 app.whenReady().then(() => {
   app.setAppUserModelId('com.bilingual.subtitle.aligner')
   nativeTheme.themeSource = 'dark'
+
+  registerDeepSeekIpc()
+  registerUserSettingsIpc()
+  registerClipboardIpc()
 
   Menu.setApplicationMenu(buildApplicationMenu())
 
