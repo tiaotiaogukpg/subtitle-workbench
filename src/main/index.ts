@@ -60,7 +60,7 @@ function createWindow(): void {
     autoHideMenuBar: true,
     webPreferences: {
       preload: resolvePreloadPath(),
-      sandbox: true,
+      sandbox: false,
       contextIsolation: true,
       nodeIntegration: false
     }

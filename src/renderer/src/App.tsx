@@ -1158,6 +1158,22 @@ function SettingsModal({
     if (event.target === event.currentTarget) onClose()
   }
 
+  async function saveAndClose(): Promise<void> {
+    const bridge = window.bilingualSubtitleAligner
+    if (!bridge?.setUserSettings) {
+      window.alert('无法保存设置：Electron 安全桥接未加载，请重启应用后重试。')
+      return
+    }
+    try {
+      const saved = await bridge.setUserSettings(settings)
+      onChange(saved)
+      onClose()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      window.alert(`无法保存设置：${msg}`)
+    }
+  }
+
   return (
     <div className="modal-backdrop" role="presentation" onClick={handleBackdropClick}>
       <div
@@ -1194,16 +1210,7 @@ function SettingsModal({
           <button
             type="button"
             className="settings-footer-button btn-accent-solid"
-            onClick={() => {
-              void (async () => {
-                try {
-                  await window.bilingualSubtitleAligner?.setUserSettings?.(settings)
-                } catch {
-                  /* ignore persist errors */
-                }
-                onClose()
-              })()
-            }}
+            onClick={() => void saveAndClose()}
           >
             保存并应用
           </button>
