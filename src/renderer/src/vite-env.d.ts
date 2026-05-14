@@ -26,6 +26,13 @@ declare global {
         model: string
       ) => Promise<{ ok: true } | { ok: false; error: string }>
       readClipboardText: () => Promise<string>
+      alignDeepSeekBatch: (payload: {
+        model: string
+        messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+      }) => Promise<
+        | { ok: true; rawText: string; latencyMs: number; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }
+        | { ok: false; error: string }
+      >
     }
   }
 }

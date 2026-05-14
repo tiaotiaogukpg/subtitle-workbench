@@ -15,7 +15,15 @@ const api = {
     ipcRenderer.invoke('deepseek:testConnection', { apiKey, model }) as Promise<
       { ok: true } | { ok: false; error: string }
     >,
-  readClipboardText: (): Promise<string> => ipcRenderer.invoke('clipboard:readText')
+  readClipboardText: (): Promise<string> => ipcRenderer.invoke('clipboard:readText'),
+  alignDeepSeekBatch: (payload: {
+    model: string
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+  }) =>
+    ipcRenderer.invoke('deepseek:alignBatch', payload) as Promise<
+      | { ok: true; rawText: string; latencyMs: number; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } }
+      | { ok: false; error: string }
+    >
 }
 
 contextBridge.exposeInMainWorld('bilingualSubtitleAligner', api)

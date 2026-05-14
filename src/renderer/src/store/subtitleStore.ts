@@ -1,6 +1,8 @@
 import { create } from 'zustand'
+import { confidenceToPercent, statusFromConfidencePct, type DeepSeekAlignmentMatchRow } from '../lib/realAlignmentBatch'
 import { initialSubtitleLines } from '../mocks/subtitles'
-import type { SubtitleLine, SubtitleStatus } from '../types'
+import type { CandidateMatch, SubtitleLine, SubtitleStatus } from '../types'
+import { useScriptPoolStore } from './scriptPoolStore'
 
 export interface SubtitleStoreState {
   subtitles: SubtitleLine[]
@@ -16,6 +18,8 @@ export interface SubtitleStoreActions {
   replaceEnglish: (id: number, english: string, matchedSegmentIds?: string[]) => void
   addProblem: (id: number, problem: string) => void
   removeProblem: (id: number, problem: string) => void
+  /** 将预览中的 AI 对齐结果写入字幕（含 candidates）；不修改未出现在 rows 中的行。 */
+  applyDeepSeekPreviewMatches: (rows: DeepSeekAlignmentMatchRow[]) => void
 }
 
 export type SubtitleStore = SubtitleStoreState & SubtitleStoreActions
@@ -80,7 +84,55 @@ export const useSubtitleStore = create<SubtitleStore>((set, get) => ({
       subtitles: s.subtitles.map((line) =>
         line.id === id ? { ...line, problems: line.problems.filter((p) => p !== problem) } : line
       )
-    }))
+    })),
+
+  applyDeepSeekPreviewMatches: (rows) => {
+    if (rows.length === 0) return
+    const validSeg = new Set(useScriptPoolStore.getState().segments.map((seg) => seg.id))
+    const grouped = new Map<number, DeepSeekAlignmentMatchRow[]>()
+    for (const r of rows) {
+      const filteredIds = r.matchedSegmentIds.filter((id) => validSeg.has(id))
+      const row: DeepSeekAlignmentMatchRow = {
+        ...r,
+        matchedSegmentIds: filteredIds,
+        english: r.english.trim()
+      }
+      if (!grouped.has(row.subtitleId)) grouped.set(row.subtitleId, [])
+      grouped.get(row.subtitleId)!.push(row)
+    }
+
+    set((s) => {
+      const idSet = new Set(s.subtitles.map((l) => l.id))
+      let subtitles = s.subtitles
+      for (const [subtitleId, list] of grouped) {
+        if (!idSet.has(subtitleId)) continue
+        const sorted = [...list].sort((a, b) => b.confidence - a.confidence)
+        const primary = sorted[0]!
+        const candidates: CandidateMatch[] = sorted.map((m) => ({
+          id: crypto.randomUUID(),
+          segmentIds: [...m.matchedSegmentIds],
+          text: m.english.trim(),
+          confidence: confidenceToPercent(m.confidence)
+        }))
+        const topPct = candidates[0]?.confidence ?? confidenceToPercent(primary.confidence)
+        const status: SubtitleStatus = statusFromConfidencePct(topPct)
+        subtitles = subtitles.map((line) =>
+          line.id === subtitleId
+            ? {
+                ...line,
+                english: primary.english.trim(),
+                matchedSegmentIds: [...primary.matchedSegmentIds],
+                confidence: topPct,
+                candidates,
+                status,
+                manuallyEdited: false
+              }
+            : line
+        )
+      }
+      return { subtitles }
+    })
+  }
 }))
 
 export function selectCurrentSubtitle(state: SubtitleStoreState): SubtitleLine | null {

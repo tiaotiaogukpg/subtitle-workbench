@@ -5,6 +5,7 @@ import { parseSrt } from './lib/srtParser'
 import { simulateAlignment } from './lib/fakeAlignmentEngine'
 import { parseMixedTranscript } from './lib/mixedTranscriptParser'
 import { EnglishScriptPoolPanel } from './components/EnglishScriptPoolPanel'
+import { RealAlignmentSandbox } from './components/RealAlignmentSandbox'
 import { VerticalStackSplitter } from './components/VerticalStackSplitter'
 import { useHistoryStore } from './store/historyStore'
 import { useScriptPoolStore } from './store/scriptPoolStore'
@@ -789,6 +790,8 @@ function AlignmentStatus({ settings, session }: { settings: SettingsState; sessi
           <Metric label="已匹配" value={matchedLine} />
           <Metric label="状态" value={alignmentStateLabel(session.phase)} />
         </div>
+
+        <RealAlignmentSandbox settings={settings} />
       </div>
     </aside>
   )
