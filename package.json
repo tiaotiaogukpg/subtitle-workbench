@@ -1,0 +1,31 @@
+{
+  "name": "bilingual-subtitle-aligner",
+  "version": "0.1.0",
+  "description": "AI-assisted bilingual subtitle alignment desktop app.",
+  "main": "out/main/index.js",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "tsc --noEmit && electron-vite build",
+    "preview": "electron-vite preview"
+  },
+  "dependencies": {
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "^5",
+    "@tailwindcss/postcss": "latest",
+    "autoprefixer": "latest",
+    "electron": "latest",
+    "electron-vite": "latest",
+    "postcss": "latest",
+    "tailwindcss": "latest",
+    "typescript": "latest",
+    "vite": "^7"
+  }
+}
