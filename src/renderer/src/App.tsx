@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type JSX, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type JSX, type ReactNode } from 'react'
 import { mockSubtitles } from './mocks/subtitles'
 import type { SettingsState, SubtitleLine, SubtitleStatus } from './types'
 
@@ -104,11 +104,19 @@ function App(): JSX.Element {
     })
   }
 
-  return (
-    <main className="app-root flex min-h-screen flex-col font-sans text-[13px] leading-normal antialiased">
-      <TopBar onOpenSettings={() => setSettingsOpen(true)} />
+  const openSettings = useCallback(() => {
+    setSettingsOpen(true)
+  }, [])
 
-      <section className="grid min-h-0 flex-1 grid-cols-[300px_minmax(0,1fr)_188px] gap-4 px-4 py-4">
+  const closeSettings = useCallback(() => {
+    setSettingsOpen(false)
+  }, [])
+
+  return (
+    <main className="app-root relative flex min-h-screen flex-col font-sans text-[13px] leading-normal antialiased">
+      <TopBar settingsOpen={settingsOpen} onOpenSettings={openSettings} />
+
+      <section className="grid min-h-0 flex-1 grid-cols-[minmax(220px,252px)_minmax(0,1fr)_minmax(176px,200px)] gap-3 px-3 py-3">
         <SubtitleNavigator
           activeId={activeId}
           selectedId={selected.id}
@@ -127,7 +135,7 @@ function App(): JSX.Element {
           onEnglishChange={(en) => updateSubtitle(selected.id, { en, status: 'manuallyEdited' })}
         />
 
-        <AlignmentStatus />
+        <AlignmentStatus settings={settings} />
       </section>
 
       <TimelineSimulator
@@ -144,43 +152,54 @@ function App(): JSX.Element {
       />
 
       {settingsOpen && (
-        <SettingsModal
-          settings={settings}
-          onChange={setSettings}
-          onClose={() => setSettingsOpen(false)}
-        />
+        <SettingsModal settings={settings} onChange={setSettings} onClose={closeSettings} />
       )}
     </main>
   )
 }
 
-function TopBar({ onOpenSettings }: { onOpenSettings: () => void }): JSX.Element {
+function TopBar({
+  settingsOpen,
+  onOpenSettings
+}: {
+  settingsOpen: boolean
+  onOpenSettings: () => void
+}): JSX.Element {
   return (
-    <header className="top-bar flex h-12 shrink-0 items-center justify-between px-3">
-      <nav className="flex items-center gap-2">
-        <button className="toolbar-button">导入中文 SRT</button>
-        <button className="toolbar-button">导入英文原稿</button>
-        <button className="toolbar-button">导出</button>
-        <button className="toolbar-button" onClick={onOpenSettings}>
+    <header className="app-toolbar">
+      <div className="app-toolbar__strip" role="toolbar" aria-label="主工具栏">
+        <button type="button" className="toolbar-btn">
+          导入中文 SRT
+        </button>
+        <button type="button" className="toolbar-btn">
+          导入英文文稿
+        </button>
+        <button type="button" className="toolbar-btn">
+          导出
+        </button>
+        <button
+          type="button"
+          className={`toolbar-btn${settingsOpen ? ' toolbar-btn--active' : ''}`}
+          onClick={onOpenSettings}
+        >
           设置
         </button>
-        <div className="toolbar-divider mx-1 h-5 w-px" />
-        <button className="toolbar-icon" aria-label="Undo">
-          ↶
+        <span className="toolbar-sep" aria-hidden />
+        <button type="button" className="toolbar-btn toolbar-btn--icon" aria-label="撤销">
+          <span className="toolbar-btn__glyph" aria-hidden>
+            ↶
+          </span>
         </button>
-        <button className="toolbar-icon" aria-label="Redo">
-          ↷
+        <button type="button" className="toolbar-btn toolbar-btn--icon" aria-label="重做">
+          <span className="toolbar-btn__glyph" aria-hidden>
+            ↷
+          </span>
         </button>
-      </nav>
+      </div>
 
-      <div className="flex items-center gap-3">
-        <div className="hidden text-right text-[12px] sm:block">
-          <p className="text-primary font-medium">Batch 3 / 12</p>
-          <p className="text-secondary mt-0.5">132 / 148 matched</p>
-        </div>
-        <button type="button" className="btn-accent-solid">
-          Start AI Alignment
-        </button>
+      <div className="app-toolbar__meta type-toolbar-meta hidden text-right sm:block">
+        <p className="text-primary font-semibold">Batch 3 / 12</p>
+        <p className="text-secondary mt-0.5 leading-tight">132 / 148 matched</p>
       </div>
     </header>
   )
@@ -199,12 +218,12 @@ function SubtitleNavigator({
 }): JSX.Element {
   return (
     <aside className="app-panel flex min-h-0 flex-col">
-      <div className="app-panel-header px-4 py-3">
+      <div className="app-panel-header nav-panel-head px-3 py-2">
         <h2 className="ui-section-title">Subtitles</h2>
-        <p className="text-meta mt-1 text-[12px]">{subtitles.length} lines</p>
+        <p className="type-caption mt-0.5">{subtitles.length} lines</p>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+      <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overflow-x-hidden p-2">
         {subtitles.map((subtitle) => {
           const meta = statusMeta[subtitle.status]
           const selected = subtitle.id === selectedId
@@ -214,21 +233,19 @@ function SubtitleNavigator({
             <button
               key={subtitle.id}
               type="button"
-              className={`subtitle-list-item ${selected ? 'subtitle-list-item-selected' : ''}`}
+              className={`subtitle-list-item${selected ? ' subtitle-list-item-selected' : ''}`}
               onClick={() => onSelect(subtitle.id)}
             >
               <span className={meta.dotClass} />
               <span className="min-w-0 flex-1">
-                <span className="flex items-center justify-between gap-3">
-                  <span className="text-primary text-[12px] font-semibold tabular-nums">
-                    #{String(subtitle.index).padStart(3, '0')}
-                  </span>
-                  <span className="text-meta font-mono text-[11px] tabular-nums">{compactTime(subtitle.startMs)}</span>
+                <span className="flex items-center justify-between gap-2">
+                  <span className="type-nav-id tabular-nums">#{String(subtitle.index).padStart(3, '0')}</span>
+                  <span className="type-nav-time font-mono tabular-nums">{compactTime(subtitle.startMs)}</span>
                 </span>
-                <span className="text-secondary mt-1 block truncate text-left text-[12px] leading-snug">
+                <span className="type-nav-preview mt-0.5 block truncate text-left leading-snug">
                   {subtitle.zh ? shortText(subtitle.zh, 34) : '需要匹配'}
                 </span>
-                <span className={`${meta.badgeClass} mt-2`}>{meta.label}</span>
+                <span className={`${meta.badgeClass} nav-badge-offset`}>{meta.label}</span>
               </span>
               {active && <span className="subtitle-list-item-active-dot absolute right-2 top-2 h-1.5 w-1.5 rounded-full" />}
             </button>
@@ -254,12 +271,12 @@ function AlignmentWorkspace({
 
   return (
     <section className="app-panel min-w-0 overflow-hidden">
-      <div className="app-panel-header px-6 py-5">
-        <div className="flex items-start justify-between gap-4">
+      <div className="app-panel-header workspace-head px-4 py-3">
+        <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="ui-section-title">Current Subtitle</p>
-            <h1 className="text-primary mt-2 text-2xl font-semibold tracking-tight">#{String(selected.index).padStart(3, '0')}</h1>
-            <p className="text-meta mt-1 font-mono text-[12px]">
+            <p className="type-field-label">Current Subtitle</p>
+            <h1 className="type-workspace-id mt-1">#{String(selected.index).padStart(3, '0')}</h1>
+            <p className="type-workspace-time mt-1 font-mono tabular-nums">
               {formatTime(selected.startMs)} → {formatTime(selected.endMs)}
             </p>
           </div>
@@ -267,49 +284,50 @@ function AlignmentWorkspace({
         </div>
       </div>
 
-      <div className="grid gap-4 p-6">
+      <div className="workspace-body grid gap-3 p-4">
         <label className="block">
-          <span className="text-secondary mb-2 block text-[12px] font-medium">Chinese Subtitle</span>
+          <span className="type-field-label mb-1.5 block">Chinese Subtitle</span>
           <textarea
-            className="subtitle-editor min-h-[112px]"
+            className="subtitle-editor subtitle-editor--dense"
             value={selected.zh}
             onChange={(event) => onChineseChange(event.currentTarget.value)}
           />
         </label>
 
         <label className="block">
-          <span className="text-secondary mb-2 block text-[12px] font-medium">English Subtitle</span>
+          <span className="type-field-label mb-1.5 block">English Subtitle</span>
           <textarea
-            className="subtitle-editor min-h-[112px]"
+            className="subtitle-editor subtitle-editor--dense"
             value={selected.en}
             onChange={(event) => onEnglishChange(event.currentTarget.value)}
           />
         </label>
 
         <div className="candidate-well">
-          <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="candidate-well__head mb-2 flex items-center justify-between gap-3">
             <div>
-              <h2 className="text-primary text-[13px] font-semibold">AI Candidate Matches</h2>
-              <p className="text-meta mt-1 text-[12px]">Confidence {selected.confidence}%</p>
+              <h2 className="type-panel-title">AI Candidate Matches</h2>
+              <p className="type-caption mt-0.5">Line confidence {selected.confidence}%</p>
             </div>
-            <div className="confidence-track w-28">
+            <div className="confidence-track confidence-track--compact w-24">
               <div className="confidence-fill" style={{ width: `${selected.confidence}%` }} />
             </div>
           </div>
 
-          <div className="grid gap-2">
+          <div className="candidate-stack">
             {selected.candidates.map((candidate, index) => {
               const confidence = [72, 58, 31][index] ?? Math.max(20, selected.confidence - index * 12)
+              const isActive = candidate === selected.en
 
               return (
                 <button
                   key={candidate}
                   type="button"
-                  className="candidate-card"
+                  className={`candidate-card${isActive ? ' candidate-card--selected' : ''}`}
                   onClick={() => onCandidateClick(candidate)}
                 >
                   <span className="candidate-score">{confidence}%</span>
-                  <span className="text-primary min-w-0 flex-1 text-left text-[13px] font-normal leading-relaxed">{candidate}</span>
+                  <span className="type-candidate-text min-w-0 flex-1 text-left">{candidate}</span>
                 </button>
               )
             })}
@@ -320,14 +338,41 @@ function AlignmentWorkspace({
   )
 }
 
-function AlignmentStatus(): JSX.Element {
+function AlignmentStatus({ settings }: { settings: SettingsState }): JSX.Element {
+  const progressPct = 67
+
   return (
-    <aside className="app-panel h-fit p-4">
-      <h2 className="ui-section-title">Alignment</h2>
-      <div className="mt-4 space-y-3 text-[13px]">
-        <Metric label="Batch" value="3 / 12" />
-        <Metric label="Matched" value="132 / 148" />
-        <Metric label="State" value="Aligning" />
+    <aside className="app-panel alignment-panel h-fit">
+      <div className="app-panel-header alignment-panel__head px-3 py-2.5">
+        <h2 className="ui-section-title">Alignment</h2>
+        <p className="type-caption mt-1 leading-snug">
+          {settings.provider} · <span className="text-secondary">{settings.model}</span>
+        </p>
+      </div>
+
+      <div className="alignment-panel__body space-y-3 p-3">
+        <div>
+          <div className="mb-1 flex items-baseline justify-between gap-2">
+            <span className="type-field-label">Run progress</span>
+            <span className="type-run-pct tabular-nums">{progressPct}%</span>
+          </div>
+          <div className="alignment-progress-track">
+            <div className="alignment-progress-fill" style={{ width: `${progressPct}%` }} />
+          </div>
+        </div>
+
+        <div>
+          <p className="type-field-label mb-1">Current batch</p>
+          <p className="type-panel-stat tabular-nums">
+            3 <span className="type-caption font-medium">/</span> 12
+          </p>
+          <p className="type-caption mt-1">24 subtitles in this batch</p>
+        </div>
+
+        <div className="metric-stack space-y-2">
+          <Metric label="Matched" value="132 / 148" />
+          <Metric label="State" value="Aligning" />
+        </div>
       </div>
     </aside>
   )
@@ -336,8 +381,8 @@ function AlignmentStatus(): JSX.Element {
 function Metric({ label, value }: { label: string; value: string }): JSX.Element {
   return (
     <div className="metric-card">
-      <p className="text-meta text-[11px] uppercase tracking-wide">{label}</p>
-      <p className="text-primary mt-1 font-medium tabular-nums">{value}</p>
+      <p className="type-field-label mb-1">{label}</p>
+      <p className="type-panel-stat tabular-nums">{value}</p>
     </div>
   )
 }
@@ -360,9 +405,9 @@ function TimelineSimulator({
   onSeek: (value: number) => void
 }): JSX.Element {
   return (
-    <section className="timeline-dock grid shrink-0 grid-cols-[minmax(0,1fr)_220px] gap-4 px-4 py-4">
-      <div className="grid grid-cols-[168px_minmax(0,1fr)] gap-4">
-        <div className="transport-shelf flex items-center gap-2 p-3">
+    <section className="timeline-dock grid shrink-0 grid-cols-[minmax(0,1fr)_minmax(200px,240px)] gap-3 px-3 py-3">
+      <div className="grid grid-cols-[148px_minmax(0,1fr)] gap-3">
+        <div className="transport-shelf flex items-center gap-1.5 p-2">
           <button type="button" className="media-button-primary" aria-label={isPlaying ? 'Pause simulator' : 'Play simulator'} onClick={onPlayToggle}>
             {isPlaying ? 'Ⅱ' : '▶'}
           </button>
@@ -372,7 +417,7 @@ function TimelineSimulator({
         </div>
 
         <div className="playback-shell">
-          <div className="text-meta mb-3 flex items-center gap-3 font-mono text-[11px] tabular-nums">
+          <div className="type-timeline-rail mb-2 flex items-center gap-2 font-mono tabular-nums">
             <span>{compactTime(currentTimeMs)}</span>
             <input
               className="timeline-range"
@@ -397,7 +442,7 @@ function TimelineSimulator({
 
       <aside className="problems-panel">
         <h3 className="ui-section-title">Problems</h3>
-        <div className="mt-3 space-y-2">
+        <div className="mt-2 space-y-1.5">
           <ProblemItem label="Subtitle too long" />
           <ProblemItem label="Low confidence match" />
           <ProblemItem label="Reading speed too high" />
@@ -420,10 +465,19 @@ function SettingsModal({
   onChange: (settings: SettingsState) => void
   onClose: () => void
 }): JSX.Element {
-  const dialogRef = useRef<HTMLDivElement>(null)
+  const dialogRef = useRef<HTMLDialogElement>(null)
 
   useEffect(() => {
-    dialogRef.current?.focus()
+    const el = dialogRef.current
+    if (!el) return
+    if (!el.open) {
+      el.showModal()
+    }
+    return () => {
+      if (el.open) {
+        el.close()
+      }
+    }
   }, [])
 
   function update(patch: Partial<SettingsState>): void {
@@ -431,38 +485,34 @@ function SettingsModal({
   }
 
   return (
-    <div className="modal-backdrop fixed inset-0 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-      <div
-        ref={dialogRef}
-        className="modal-dialog relative flex max-h-[92vh] w-[520px] flex-col overflow-hidden outline-none"
-        tabIndex={-1}
-      >
-        <header className="modal-header flex h-14 items-center justify-between px-5">
+    <dialog ref={dialogRef} className="settings-dialog" onClose={onClose}>
+      <div className="flex max-h-[92vh] min-h-0 flex-col">
+        <header className="modal-header flex h-14 shrink-0 items-center justify-between px-5">
           <h2 className="text-primary text-[16px] font-semibold tracking-tight">Settings</h2>
           <button
             type="button"
             className="text-meta rounded-lg px-2 text-2xl leading-none hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text-primary)]"
-            onClick={onClose}
+            onClick={() => dialogRef.current?.close()}
             aria-label="Close settings"
           >
             ×
           </button>
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <div className="modal-body-scroll min-h-0 flex-1 overflow-y-auto px-5 py-4">
           <SettingsContent settings={settings} onUpdate={update} />
         </div>
 
-        <footer className="modal-footer flex justify-end gap-3 px-5 py-4">
-          <button type="button" className="settings-footer-button btn-secondary-solid" onClick={onClose}>
+        <footer className="modal-footer flex shrink-0 justify-end gap-3 px-5 py-4">
+          <button type="button" className="settings-footer-button btn-secondary-solid" onClick={() => dialogRef.current?.close()}>
             退出
           </button>
-          <button type="button" className="settings-footer-button btn-accent-solid" onClick={onClose}>
+          <button type="button" className="settings-footer-button btn-accent-solid" onClick={() => dialogRef.current?.close()}>
             保存并应用
           </button>
         </footer>
       </div>
-    </div>
+    </dialog>
   )
 }
 
