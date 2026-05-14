@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useId, useRef, useState, type JSX, type MouseEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useId, useRef, useState, type ChangeEvent, type JSX, type MouseEvent, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
+import { parseSrt } from './lib/srtParser'
 import { selectCurrentSubtitle, useSubtitleStore } from './store/subtitleStore'
 import type {
   AlignmentSession,
@@ -123,6 +124,7 @@ function shortText(text: string, length = 42): string {
 function App(): JSX.Element {
   const subtitles = useSubtitleStore((s) => s.subtitles)
   const selectSubtitle = useSubtitleStore((s) => s.selectSubtitle)
+  const chineseSrtInputRef = useRef<HTMLInputElement>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settings, setSettings] = useState<SettingsState>(() => ({
     ...defaultSettings,
@@ -208,6 +210,30 @@ function App(): JSX.Element {
     setAlignmentModalOpen(true)
   }, [])
 
+  const handleChineseSrtFileChange = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
+      const input = event.currentTarget
+      const file = input.files?.[0]
+      input.value = ''
+      if (!file) return
+      try {
+        const raw = await file.text()
+        const parsed = parseSrt(raw)
+        const store = useSubtitleStore.getState()
+        store.setSubtitles(parsed)
+        const first = parsed[0]
+        if (first) {
+          store.selectSubtitle(first.id)
+          setCurrentTimeMs(first.start)
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        window.alert(`无法导入 SRT：${msg}`)
+      }
+    },
+    []
+  )
+
   const closeAlignmentModal = useCallback(() => {
     setAlignmentModalOpen(false)
   }, [])
@@ -235,19 +261,21 @@ function App(): JSX.Element {
 
   return (
     <>
-      <main className="app-root app-workbench relative flex h-screen min-h-0 flex-col overflow-hidden font-sans text-[13px] leading-normal antialiased">
+      <main className="app-root app-workbench relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden font-sans text-[13px] leading-normal antialiased">
         <TopBar
           alignmentBatchIndex={alignmentSession.batchIndex}
           alignmentBatchTotal={alignmentSession.batchTotal}
           alignmentMatched={alignmentSession.matched}
           alignmentPhase={alignmentSession.phase}
           alignmentTotal={alignmentSession.total}
+          chineseSrtInputRef={chineseSrtInputRef}
           settingsOpen={settingsOpen}
+          onChineseSrtFileChange={handleChineseSrtFileChange}
           onOpenAlignment={openAlignmentModal}
           onOpenSettings={openSettings}
         />
 
-        <section className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(8.25rem,0.27fr)_minmax(0,1fr)_minmax(7rem,0.23fr)] gap-5">
+        <section className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(8.25rem,0.27fr)_minmax(0,1fr)_minmax(7rem,0.23fr)] grid-rows-[minmax(0,1fr)] gap-5 overflow-hidden">
           <SubtitleNavigator activeId={activeId} onSeekToSubtitle={setCurrentTimeMs} />
 
           <AlignmentWorkspace />
@@ -298,7 +326,9 @@ function TopBar({
   alignmentBatchIndex,
   alignmentBatchTotal,
   alignmentMatched,
-  alignmentTotal
+  alignmentTotal,
+  chineseSrtInputRef,
+  onChineseSrtFileChange
 }: {
   settingsOpen: boolean
   onOpenSettings: () => void
@@ -308,6 +338,8 @@ function TopBar({
   alignmentBatchTotal: number
   alignmentMatched: number
   alignmentTotal: number
+  chineseSrtInputRef: RefObject<HTMLInputElement | null>
+  onChineseSrtFileChange: (event: ChangeEvent<HTMLInputElement>) => void
 }): JSX.Element {
   const aligning = alignmentPhase === 'aligning'
   const showLiveMeta = alignmentPhase === 'aligning' || alignmentPhase === 'complete'
@@ -324,7 +356,16 @@ function TopBar({
           开始 AI 对齐
         </button>
         <span className="toolbar-sep" aria-hidden />
-        <button type="button" className="toolbar-btn">
+        <input
+          ref={chineseSrtInputRef}
+          accept=".srt,text/plain"
+          className="sr-only"
+          tabIndex={-1}
+          type="file"
+          aria-hidden
+          onChange={onChineseSrtFileChange}
+        />
+        <button type="button" className="toolbar-btn" onClick={() => chineseSrtInputRef.current?.click()}>
           导入中文 SRT
         </button>
         <button type="button" className="toolbar-btn">
@@ -386,7 +427,7 @@ function SubtitleNavigator({
   const selectSubtitle = useSubtitleStore((s) => s.selectSubtitle)
 
   return (
-    <aside className="app-panel app-panel--sidebar flex min-h-0 min-w-0 flex-col">
+    <aside className="app-panel app-panel--sidebar flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
       <div className="app-panel-header nav-panel-head px-3 py-2">
         <h2 className="ui-section-title">Subtitles</h2>
         <p className="type-caption mt-0.5">{subtitles.length} lines</p>
@@ -444,15 +485,15 @@ function AlignmentWorkspace(): JSX.Element {
 
   if (!selected) {
     return (
-      <section className="app-panel app-panel--primary flex min-h-0 min-w-0 flex-col overflow-hidden">
+      <section className="app-panel app-panel--primary flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
         <div className="app-panel-header workspace-head shrink-0 px-4 py-3">
           <p className="type-field-label">当前字幕</p>
           <h1 className="type-workspace-id mt-1 text-[var(--color-text-meta)]">—</h1>
         </div>
-        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 overflow-y-auto p-8 text-center">
           <p className="text-primary text-[15px] font-semibold">暂无字幕</p>
           <p className="type-caption max-w-sm text-secondary leading-relaxed">
-            当前项目没有字幕行。请使用工具栏「导入中文 SRT」载入时间轴与文本（功能接入后生效）。
+            当前项目没有字幕行。请使用工具栏「导入中文 SRT」选择 `.srt` 文件载入。
           </p>
         </div>
       </section>
@@ -469,7 +510,7 @@ function AlignmentWorkspace(): JSX.Element {
   }
 
   return (
-    <section className="app-panel app-panel--primary flex min-h-0 min-w-0 flex-col overflow-hidden">
+    <section className="app-panel app-panel--primary flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
       <div className="app-panel-header workspace-head shrink-0 px-4 py-3">
         <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
           <div>
@@ -554,7 +595,7 @@ function AlignmentStatus({ settings, session }: { settings: SettingsState; sessi
   const inBatch = subtitlesInCurrentBatch(session)
 
   return (
-    <aside className="app-panel alignment-panel flex min-h-0 min-w-0 flex-col overflow-hidden">
+    <aside className="app-panel alignment-panel flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
       <div className="app-panel-header alignment-panel__head shrink-0 px-4 py-2.5">
         <h2 className="ui-section-title">对齐</h2>
         <p className="type-caption alignment-monitor-tag mt-1">AI 会话监控</p>
@@ -636,8 +677,8 @@ function TimelineSimulator({
 }): JSX.Element {
   const selected = useSubtitleStore((s) => selectCurrentSubtitle(s))
   return (
-    <section className="timeline-dock grid min-h-0 min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_minmax(8.5rem,0.4fr)] gap-5">
-      <div className="grid min-h-0 min-w-0 grid-cols-[minmax(5.5rem,6.75rem)_minmax(0,1fr)] items-stretch gap-5">
+    <section className="timeline-dock grid min-h-0 min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_minmax(8.5rem,0.4fr)] gap-5 overflow-hidden">
+      <div className="grid min-h-0 min-w-0 grid-cols-[minmax(5.5rem,6.75rem)_minmax(0,1fr)] grid-rows-1 items-stretch gap-5 overflow-hidden">
         <div className="transport-tower">
           <button
             type="button"
@@ -673,8 +714,8 @@ function TimelineSimulator({
           </button>
         </div>
 
-        <div className="playback-shell min-w-0">
-          <div className="type-timeline-rail mb-2 grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 font-mono tabular-nums">
+        <div className="playback-shell flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+          <div className="type-timeline-rail mb-2 grid min-w-0 shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 font-mono tabular-nums">
             <span className="shrink-0">{compactTime(currentTimeMs)}</span>
             <input
               className="timeline-range min-w-0"
@@ -688,7 +729,7 @@ function TimelineSimulator({
             <span className="shrink-0 text-right">{compactTime(durationMs)}</span>
           </div>
 
-          <div className="playback-preview">
+          <div className="playback-preview min-h-0 flex-1">
             <div className="max-w-3xl">
               {selected ? (
                 <>
@@ -706,9 +747,9 @@ function TimelineSimulator({
         </div>
       </div>
 
-      <aside className="problems-panel min-w-0">
-        <h3 className="ui-section-title">Problems</h3>
-        <div className="mt-2 space-y-2">
+      <aside className="problems-panel flex min-h-0 min-w-0 flex-col overflow-hidden">
+        <h3 className="ui-section-title shrink-0">Problems</h3>
+        <div className="mt-2 min-h-0 flex-1 space-y-2 overflow-y-auto overflow-x-hidden">
           {!selected ? (
             <p className="type-caption text-meta px-1 leading-relaxed">无选中字幕行；导入字幕后再查看本行问题。</p>
           ) : selected.problems.length === 0 ? (
