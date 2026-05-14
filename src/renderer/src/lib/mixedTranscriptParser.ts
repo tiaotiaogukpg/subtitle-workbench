@@ -16,6 +16,15 @@ function countLatinLetters(s: string): number {
   return (s.match(/[a-zA-Z]/g) ?? []).length
 }
 
+function hasHanScript(s: string): boolean {
+  return /[\u3400-\u9fff\uf900-\ufaff]/.test(s)
+}
+
+/** ASCII 或全角数字（无汉字时可用于英文稿/时间码等，与拉丁字母同属对齐用「西文」类）。 */
+function hasDigitLike(s: string): boolean {
+  return /[0-9\uFF10-\uFF19]/.test(s)
+}
+
 /**
  * 说话人 / 小节标题行：整行在冒号后无正文（仅空白或引号括号收尾）。
  * 排除常见时间码 `00:00`、URL。
@@ -45,6 +54,7 @@ export function detectLineLanguageKind(line: string): LineLanguageKind {
   if (cjk > 0 && lat > 0) return 'mixed'
   if (cjk > 0) return 'chinese'
   if (lat > 0) return 'english'
+  if (hasDigitLike(t) && !hasHanScript(t)) return 'english'
   return 'unknown'
 }
 

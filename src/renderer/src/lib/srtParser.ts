@@ -76,7 +76,8 @@ export function parseSrt(content: string): SubtitleLine[] {
       status: 'unmatched',
       candidates: [],
       problems: [],
-      manuallyEdited: false
+      manuallyEdited: false,
+      matchedSegmentIds: []
     })
   }
 

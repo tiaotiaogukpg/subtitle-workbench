@@ -21,6 +21,11 @@ function languageBadgeClass(lang: ScriptSegmentLanguage): string {
   return 'script-pool-badge script-pool-badge--unk'
 }
 
+/** 与解析器一致：无汉字且含数字 → 可走假 AI 英文顺序流（旧数据可能仍为 UNK）。 */
+function isDigitLikeAlignableScript(text: string): boolean {
+  return /[0-9\uFF10-\uFF19]/.test(text) && !/[\u3400-\u9fff\uf900-\ufaff]/.test(text)
+}
+
 const FILTER_OPTIONS: { id: ScriptPoolListFilter; label: string }[] = [
   { id: 'all', label: '全部' },
   { id: 'english', label: '仅英文' },
@@ -86,12 +91,29 @@ export function EnglishScriptPoolPanel(): JSX.Element {
                 key={seg.id}
                 type="button"
                 className={`script-pool-item${isSelected ? ' script-pool-item--selected' : ''}`}
-                title={seg.used ? '默认参与英文对齐候选池' : '保留为上下文，默认不参与英文候选'}
+                title={
+                  seg.language === 'english'
+                    ? seg.used
+                      ? '默认参与假 AI 英文候选（按 EN 顺序推进）'
+                      : '纯英文片段；当前未标为对齐池（used）'
+                    : seg.language === 'chinese' || seg.language === 'mixed'
+                      ? '仅作对齐上下文展示；假 AI 候选不使用'
+                      : seg.language === 'unknown' && isDigitLikeAlignableScript(seg.text)
+                        ? '纯数字（无汉字）可与假 AI 英文流一并顺序消费；重新导入后将标为 EN'
+                        : '假 AI 对齐不使用此类片段'
+                }
                 onClick={() => selectSegment(isSelected ? null : seg.id)}
               >
                 <div className="flex w-full flex-wrap items-center justify-between gap-2">
                   <span className="type-nav-id tabular-nums">#{String(displayIndex).padStart(3, '0')}</span>
-                  <span className={languageBadgeClass(seg.language)}>{languageBadgeLabel(seg.language)}</span>
+                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+                    <span className={languageBadgeClass(seg.language)}>{languageBadgeLabel(seg.language)}</span>
+                    {seg.language === 'chinese' || seg.language === 'mixed' ? (
+                      <span className="script-pool-context-tag" title="Context only — fake AI alignment does not use this line">
+                        上下文
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
                 <span className="type-caption text-meta mt-0.5 block text-left">L{seg.sourceLine}</span>
                 <span className="script-pool-item__text mt-1 block text-left leading-snug text-[var(--color-text-primary)]">

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useId, useRef, useState, type ChangeEvent, type JSX, type MouseEvent, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
+import { downloadBilingualSrt } from './lib/srtExporter'
 import { parseSrt } from './lib/srtParser'
+import { simulateAlignment } from './lib/fakeAlignmentEngine'
 import { parseMixedTranscript } from './lib/mixedTranscriptParser'
 import { EnglishScriptPoolPanel } from './components/EnglishScriptPoolPanel'
 import { VerticalStackSplitter } from './components/VerticalStackSplitter'
@@ -88,7 +90,8 @@ function createIdleAlignmentSession(total: number): AlignmentSession {
     batchTotal: 0,
     matched: 0,
     total,
-    batchSize: defaultSettings.batchSize
+    batchSize: defaultSettings.batchSize,
+    processingSubtitleId: null
   }
 }
 
@@ -125,6 +128,11 @@ function shortText(text: string, length = 42): string {
   return text.length > length ? `${text.slice(0, length)}...` : text
 }
 
+function segmentIdsEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false
+  return a.every((v, i) => v === b[i])
+}
+
 function App(): JSX.Element {
   const subtitles = useSubtitleStore((s) => s.subtitles)
   const selectSubtitle = useSubtitleStore((s) => s.selectSubtitle)
@@ -135,10 +143,19 @@ function App(): JSX.Element {
     ...defaultSettings,
     theme: readStoredTheme()
   }))
+
+  const handleExportBilingualSrt = useCallback(() => {
+    downloadBilingualSrt(subtitles, {
+      subtitleOrder: settings.subtitleOrder,
+      separateLines: settings.separateLines
+    })
+  }, [subtitles, settings.subtitleOrder, settings.separateLines])
+
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTimeMs, setCurrentTimeMs] = useState(0)
   const [alignmentModalOpen, setAlignmentModalOpen] = useState(false)
   const [alignmentSession, setAlignmentSession] = useState<AlignmentSession>(() => createIdleAlignmentSession(0))
+  const alignmentRunRef = useRef<{ cancel: () => void } | null>(null)
   const durationMs = subtitles[subtitles.length - 1]?.end ?? 1
 
   useLayoutEffect(() => {
@@ -155,33 +172,11 @@ function App(): JSX.Element {
   }, [subtitles.length])
 
   useEffect(() => {
-    if (alignmentSession.phase !== 'aligning') return
-    const interval = window.setInterval(() => {
-      setAlignmentSession((prev) => {
-        if (prev.phase !== 'aligning') return prev
-        const step = 1.6 + Math.random() * 1.8
-        const nextProgress = Math.min(100, prev.progressPct + step)
-        const ratio = nextProgress / 100
-        const matched =
-          nextProgress >= 100 ? prev.total : Math.min(prev.total, Math.floor(ratio * prev.total * 0.96))
-        const batchIndex =
-          nextProgress >= 100
-            ? prev.batchTotal
-            : Math.min(prev.batchTotal, Math.max(1, Math.ceil(ratio * prev.batchTotal)))
-        if (nextProgress >= 100) {
-          return {
-            ...prev,
-            phase: 'complete',
-            progressPct: 100,
-            matched: prev.total,
-            batchIndex: prev.batchTotal
-          }
-        }
-        return { ...prev, progressPct: nextProgress, matched, batchIndex }
-      })
-    }, 300)
-    return () => window.clearInterval(interval)
-  }, [alignmentSession.phase])
+    return () => {
+      alignmentRunRef.current?.cancel()
+      alignmentRunRef.current = null
+    }
+  }, [])
 
   const activeSubtitle = subtitles.find((subtitle) => currentTimeMs >= subtitle.start && currentTimeMs <= subtitle.end)
   const activeId = activeSubtitle?.id
@@ -267,6 +262,7 @@ function App(): JSX.Element {
   }, [])
 
   const runAlignmentFromWorkflow = useCallback((draft: AlignmentWorkflowDraft) => {
+    alignmentRunRef.current?.cancel()
     setSettings((s) => ({
       ...s,
       model: draft.model,
@@ -274,7 +270,7 @@ function App(): JSX.Element {
       confidenceThreshold: draft.confidenceThreshold
     }))
     const total = subtitles.length
-    const batchTotal = Math.max(1, Math.ceil(total / draft.batchSize))
+    const batchTotal = Math.max(1, Math.ceil(total / Math.max(1, draft.batchSize)))
     setAlignmentSession({
       phase: 'aligning',
       progressPct: 0,
@@ -282,9 +278,11 @@ function App(): JSX.Element {
       batchTotal,
       matched: 0,
       total,
-      batchSize: draft.batchSize
+      batchSize: draft.batchSize,
+      processingSubtitleId: null
     })
     setAlignmentModalOpen(false)
+    alignmentRunRef.current = simulateAlignment({ draft, setAlignmentSession })
   }, [subtitles.length])
 
   return (
@@ -301,6 +299,7 @@ function App(): JSX.Element {
           settingsOpen={settingsOpen}
           onChineseSrtFileChange={handleChineseSrtFileChange}
           onEnglishTxtFileChange={handleEnglishTxtFileChange}
+          onExportBilingualSrt={handleExportBilingualSrt}
           onOpenAlignment={openAlignmentModal}
           onOpenSettings={openSettings}
         />
@@ -357,6 +356,7 @@ function TopBar({
   settingsOpen,
   onOpenSettings,
   onOpenAlignment,
+  onExportBilingualSrt,
   alignmentPhase,
   alignmentBatchIndex,
   alignmentBatchTotal,
@@ -370,6 +370,7 @@ function TopBar({
   settingsOpen: boolean
   onOpenSettings: () => void
   onOpenAlignment: () => void
+  onExportBilingualSrt: () => void
   alignmentPhase: AlignmentSession['phase']
   alignmentBatchIndex: number
   alignmentBatchTotal: number
@@ -419,7 +420,7 @@ function TopBar({
         <button type="button" className="toolbar-btn" onClick={() => englishTxtInputRef.current?.click()}>
           导入英文文稿
         </button>
-        <button type="button" className="toolbar-btn">
+        <button type="button" className="toolbar-btn" onClick={onExportBilingualSrt}>
           导出
         </button>
         <button
@@ -551,10 +552,11 @@ function AlignmentWorkspace(): JSX.Element {
   const line = selected
   const meta = statusMeta[line.status]
 
-  function applyCandidate(candidateText: string): void {
-    const match = line.candidates.find((c) => c.text === candidateText)
-    replaceEnglish(line.id, candidateText)
-    if (match) updateConfidence(line.id, match.confidence)
+  function applyCandidate(candidateId: string): void {
+    const match = line.candidates.find((c) => c.id === candidateId)
+    if (!match) return
+    replaceEnglish(line.id, match.text, match.segmentIds)
+    updateConfidence(line.id, match.confidence)
   }
 
   return (
@@ -597,7 +599,8 @@ function AlignmentWorkspace(): JSX.Element {
               updateSubtitle(line.id, {
                 english: event.currentTarget.value,
                 manuallyEdited: true,
-                status: 'manual'
+                status: 'manual',
+                matchedSegmentIds: []
               })
             }
           />
@@ -616,17 +619,24 @@ function AlignmentWorkspace(): JSX.Element {
 
           <div className="candidate-stack">
             {line.candidates.map((candidate) => {
-              const isActive = candidate.text === line.english
+              const isActive =
+                candidate.text === line.english &&
+                segmentIdsEqual(candidate.segmentIds, line.matchedSegmentIds ?? [])
 
               return (
                 <button
                   key={candidate.id}
                   type="button"
                   className={`candidate-card${isActive ? ' candidate-card--selected' : ''}`}
-                  onClick={() => applyCandidate(candidate.text)}
+                  onClick={() => applyCandidate(candidate.id)}
                 >
-                  <span className="candidate-score">{candidate.confidence}%</span>
-                  <span className="type-candidate-text min-w-0 flex-1 text-left">{candidate.text}</span>
+                  <div className="candidate-card__top-row flex w-full flex-wrap items-start justify-between gap-2">
+                    <span className="candidate-score">{candidate.confidence}%</span>
+                    <span className="candidate-seg-count tabular-nums">
+                      {candidate.segmentIds.length} segment{candidate.segmentIds.length === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                  <span className="type-candidate-text mt-1.5 min-w-0 flex-1 text-left">{candidate.text}</span>
                 </button>
               )
             })}
@@ -641,6 +651,9 @@ function AlignmentStatus({ settings, session }: { settings: SettingsState; sessi
   const progressPct = session.phase === 'idle' ? 0 : Math.round(session.progressPct)
   const matchedLine = `${session.matched} / ${session.total}`
   const inBatch = subtitlesInCurrentBatch(session)
+  const processingLine = useSubtitleStore((s) =>
+    session.processingSubtitleId != null ? (s.subtitles.find((l) => l.id === session.processingSubtitleId) ?? null) : null
+  )
 
   return (
     <aside className="app-panel alignment-panel flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
@@ -680,6 +693,16 @@ function AlignmentStatus({ settings, session }: { settings: SettingsState; sessi
               : `本批含 ${inBatch} 条字幕`}
           </p>
         </div>
+
+        {session.phase === 'aligning' && processingLine ? (
+          <div className="rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] p-2.5">
+            <p className="type-field-label mb-1">正在处理</p>
+            <p className="type-panel-stat tabular-nums">#{String(processingLine.id).padStart(3, '0')}</p>
+            <p className="type-caption mt-1.5 leading-snug text-secondary">
+              {processingLine.chinese ? shortText(processingLine.chinese, 96) : '（无中文）'}
+            </p>
+          </div>
+        ) : null}
 
         <div className="metric-stack space-y-3">
           <Metric label="已匹配" value={matchedLine} />
@@ -1009,7 +1032,12 @@ function AlignmentWorkflowModal({
           <button type="button" className="settings-footer-button btn-secondary-solid" onClick={onClose}>
             取消
           </button>
-          <button type="button" className="settings-footer-button btn-accent-solid" onClick={() => onRun(draft)}>
+          <button
+            type="button"
+            className="settings-footer-button btn-accent-solid"
+            disabled={subtitleCount === 0}
+            onClick={() => onRun(draft)}
+          >
             运行对齐
           </button>
         </footer>

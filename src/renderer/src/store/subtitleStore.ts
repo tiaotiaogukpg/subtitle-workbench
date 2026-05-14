@@ -13,7 +13,7 @@ export interface SubtitleStoreActions {
   updateSubtitle: (id: number, patch: Partial<SubtitleLine>) => void
   updateConfidence: (id: number, confidence: number) => void
   updateStatus: (id: number, status: SubtitleStatus) => void
-  replaceEnglish: (id: number, english: string) => void
+  replaceEnglish: (id: number, english: string, matchedSegmentIds?: string[]) => void
   addProblem: (id: number, problem: string) => void
   removeProblem: (id: number, problem: string) => void
 }
@@ -51,13 +51,14 @@ export const useSubtitleStore = create<SubtitleStore>((set, get) => ({
 
   updateStatus: (id, status) => get().updateSubtitle(id, { status }),
 
-  replaceEnglish: (id, english) =>
+  replaceEnglish: (id, english, matchedSegmentIds) =>
     set((s) => ({
       subtitles: s.subtitles.map((line) =>
         line.id === id
           ? {
               ...line,
               english,
+              matchedSegmentIds: matchedSegmentIds ?? line.matchedSegmentIds,
               manuallyEdited: true,
               status: line.status === 'unmatched' ? 'manual' : line.status
             }
