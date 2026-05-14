@@ -25,3 +25,28 @@ export interface SettingsState {
   theme: 'light' | 'dark'
   fontSize: number
 }
+
+export type AlignmentSessionPhase = 'idle' | 'aligning' | 'complete'
+
+export type AlignmentWorkflowMode = 'sequential' | 'semanticHybrid'
+
+export type SemanticMatchStrength = 'low' | 'medium' | 'high'
+
+export interface AlignmentSession {
+  phase: AlignmentSessionPhase
+  progressPct: number
+  batchIndex: number
+  batchTotal: number
+  matched: number
+  total: number
+  batchSize: number
+}
+
+export interface AlignmentWorkflowDraft {
+  model: string
+  batchSize: number
+  confidenceThreshold: number
+  mode: AlignmentWorkflowMode
+  semanticStrength: SemanticMatchStrength
+  retryFailed: boolean
+}

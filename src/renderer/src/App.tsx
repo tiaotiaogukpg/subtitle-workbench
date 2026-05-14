@@ -1,6 +1,13 @@
-import { useCallback, useEffect, useRef, useState, type JSX, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useId, useRef, useState, type JSX, type MouseEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { mockSubtitles } from './mocks/subtitles'
-import type { SettingsState, SubtitleLine, SubtitleStatus } from './types'
+import type {
+  AlignmentSession,
+  AlignmentWorkflowDraft,
+  SettingsState,
+  SubtitleLine,
+  SubtitleStatus
+} from './types'
 
 const statusMeta: Record<
   SubtitleStatus,
@@ -32,6 +39,18 @@ const statusMeta: Record<
   }
 }
 
+const THEME_STORAGE_KEY = 'subtitle-aligner-theme'
+
+function readStoredTheme(): 'light' | 'dark' {
+  try {
+    const v = localStorage.getItem(THEME_STORAGE_KEY)
+    if (v === 'light' || v === 'dark') return v
+  } catch {
+    /* ignore */
+  }
+  return 'dark'
+}
+
 const defaultSettings: SettingsState = {
   provider: 'Deepseek',
   apiKey: '',
@@ -42,8 +61,36 @@ const defaultSettings: SettingsState = {
   subtitleOrder: 'chineseFirst',
   exportFormat: '.srt',
   separateLines: true,
-  theme: 'light',
+  theme: 'dark',
   fontSize: 14
+}
+
+function createIdleAlignmentSession(total: number): AlignmentSession {
+  return {
+    phase: 'idle',
+    progressPct: 0,
+    batchIndex: 0,
+    batchTotal: 0,
+    matched: 0,
+    total,
+    batchSize: defaultSettings.batchSize
+  }
+}
+
+function alignmentStateLabel(phase: AlignmentSession['phase']): string {
+  if (phase === 'idle') return 'Ready'
+  if (phase === 'aligning') return 'Aligning'
+  return 'Complete'
+}
+
+function subtitlesInCurrentBatch(session: AlignmentSession): number {
+  if (session.phase === 'idle' || session.batchTotal === 0 || session.batchIndex < 1) return 0
+  return Math.min(session.batchSize, session.total - (session.batchIndex - 1) * session.batchSize)
+}
+
+function estimateApiUsageTokens(draft: AlignmentWorkflowDraft, subtitleCount: number): number {
+  const batches = Math.max(1, Math.ceil(subtitleCount / draft.batchSize))
+  return Math.round(batches * draft.batchSize * 220)
 }
 
 function formatTime(ms: number): string {
@@ -67,10 +114,57 @@ function App(): JSX.Element {
   const [subtitles, setSubtitles] = useState<SubtitleLine[]>(mockSubtitles)
   const [selectedId, setSelectedId] = useState('sub-003')
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [settings, setSettings] = useState(defaultSettings)
+  const [settings, setSettings] = useState<SettingsState>(() => ({
+    ...defaultSettings,
+    theme: readStoredTheme()
+  }))
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTimeMs, setCurrentTimeMs] = useState(7100)
+  const [alignmentModalOpen, setAlignmentModalOpen] = useState(false)
+  const [alignmentSession, setAlignmentSession] = useState<AlignmentSession>(() => createIdleAlignmentSession(mockSubtitles.length))
   const durationMs = subtitles[subtitles.length - 1]?.endMs ?? 1
+
+  useLayoutEffect(() => {
+    document.documentElement.dataset.theme = settings.theme
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, settings.theme)
+    } catch {
+      /* ignore */
+    }
+  }, [settings.theme])
+
+  useEffect(() => {
+    setAlignmentSession((prev) => (prev.phase === 'idle' ? { ...prev, total: subtitles.length } : prev))
+  }, [subtitles.length])
+
+  useEffect(() => {
+    if (alignmentSession.phase !== 'aligning') return
+    const interval = window.setInterval(() => {
+      setAlignmentSession((prev) => {
+        if (prev.phase !== 'aligning') return prev
+        const step = 1.6 + Math.random() * 1.8
+        const nextProgress = Math.min(100, prev.progressPct + step)
+        const ratio = nextProgress / 100
+        const matched =
+          nextProgress >= 100 ? prev.total : Math.min(prev.total, Math.floor(ratio * prev.total * 0.96))
+        const batchIndex =
+          nextProgress >= 100
+            ? prev.batchTotal
+            : Math.min(prev.batchTotal, Math.max(1, Math.ceil(ratio * prev.batchTotal)))
+        if (nextProgress >= 100) {
+          return {
+            ...prev,
+            phase: 'complete',
+            progressPct: 100,
+            matched: prev.total,
+            batchIndex: prev.batchTotal
+          }
+        }
+        return { ...prev, progressPct: nextProgress, matched, batchIndex }
+      })
+    }, 300)
+    return () => window.clearInterval(interval)
+  }, [alignmentSession.phase])
 
   const selected = subtitles.find((subtitle) => subtitle.id === selectedId) ?? subtitles[0]
   const activeSubtitle = subtitles.find((subtitle) => currentTimeMs >= subtitle.startMs && currentTimeMs <= subtitle.endMs)
@@ -112,62 +206,141 @@ function App(): JSX.Element {
     setSettingsOpen(false)
   }, [])
 
+  const openAlignmentModal = useCallback(() => {
+    setAlignmentModalOpen(true)
+  }, [])
+
+  const closeAlignmentModal = useCallback(() => {
+    setAlignmentModalOpen(false)
+  }, [])
+
+  const runAlignmentFromWorkflow = useCallback((draft: AlignmentWorkflowDraft) => {
+    setSettings((s) => ({
+      ...s,
+      model: draft.model,
+      batchSize: draft.batchSize,
+      confidenceThreshold: draft.confidenceThreshold
+    }))
+    const total = subtitles.length
+    const batchTotal = Math.max(1, Math.ceil(total / draft.batchSize))
+    setAlignmentSession({
+      phase: 'aligning',
+      progressPct: 0,
+      batchIndex: 1,
+      batchTotal,
+      matched: 0,
+      total,
+      batchSize: draft.batchSize
+    })
+    setAlignmentModalOpen(false)
+  }, [subtitles.length])
+
   return (
-    <main className="app-root relative flex h-screen min-h-0 flex-col gap-4 overflow-hidden font-sans text-[13px] leading-normal antialiased">
-      <TopBar settingsOpen={settingsOpen} onOpenSettings={openSettings} />
-
-      <section className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(8.25rem,0.27fr)_minmax(0,1fr)_minmax(7rem,0.23fr)] gap-3 px-3 py-2 sm:gap-4 sm:px-4">
-        <SubtitleNavigator
-          activeId={activeId}
-          selectedId={selected.id}
-          subtitles={subtitles}
-          onSelect={(id) => {
-            setSelectedId(id)
-            const line = subtitles.find((item) => item.id === id)
-            if (line) setCurrentTimeMs(line.startMs)
-          }}
+    <>
+      <main className="app-root app-workbench relative flex h-screen min-h-0 flex-col overflow-hidden font-sans text-[13px] leading-normal antialiased">
+        <TopBar
+          alignmentBatchIndex={alignmentSession.batchIndex}
+          alignmentBatchTotal={alignmentSession.batchTotal}
+          alignmentMatched={alignmentSession.matched}
+          alignmentPhase={alignmentSession.phase}
+          alignmentTotal={alignmentSession.total}
+          settingsOpen={settingsOpen}
+          onOpenAlignment={openAlignmentModal}
+          onOpenSettings={openSettings}
         />
 
-        <AlignmentWorkspace
+        <section className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(8.25rem,0.27fr)_minmax(0,1fr)_minmax(7rem,0.23fr)] gap-5">
+          <SubtitleNavigator
+            activeId={activeId}
+            selectedId={selected.id}
+            subtitles={subtitles}
+            onSelect={(id) => {
+              setSelectedId(id)
+              const line = subtitles.find((item) => item.id === id)
+              if (line) setCurrentTimeMs(line.startMs)
+            }}
+          />
+
+          <AlignmentWorkspace
+            selected={selected}
+            onCandidateClick={applyCandidate}
+            onChineseChange={(zh) => updateSubtitle(selected.id, { zh, status: 'manuallyEdited' })}
+            onEnglishChange={(en) => updateSubtitle(selected.id, { en, status: 'manuallyEdited' })}
+          />
+
+          <AlignmentStatus session={alignmentSession} settings={settings} />
+        </section>
+
+        <TimelineSimulator
+          currentTimeMs={currentTimeMs}
+          durationMs={durationMs}
+          isPlaying={isPlaying}
           selected={selected}
-          onCandidateClick={applyCandidate}
-          onChineseChange={(zh) => updateSubtitle(selected.id, { zh, status: 'manuallyEdited' })}
-          onEnglishChange={(en) => updateSubtitle(selected.id, { en, status: 'manuallyEdited' })}
+          onPlayToggle={() => setIsPlaying((playing) => !playing)}
+          onStop={() => {
+            setIsPlaying(false)
+            setCurrentTimeMs(0)
+          }}
+          onSeek={setCurrentTimeMs}
         />
+      </main>
 
-        <AlignmentStatus settings={settings} />
-      </section>
+      {alignmentModalOpen
+        ? createPortal(
+            <AlignmentWorkflowModal
+              subtitleCount={subtitles.length}
+              settings={settings}
+              onClose={closeAlignmentModal}
+              onRun={runAlignmentFromWorkflow}
+            />,
+            document.body
+          )
+        : null}
 
-      <TimelineSimulator
-        currentTimeMs={currentTimeMs}
-        durationMs={durationMs}
-        isPlaying={isPlaying}
-        selected={selected}
-        onPlayToggle={() => setIsPlaying((playing) => !playing)}
-        onStop={() => {
-          setIsPlaying(false)
-          setCurrentTimeMs(0)
-        }}
-        onSeek={setCurrentTimeMs}
-      />
-
-      {settingsOpen && (
-        <SettingsModal settings={settings} onChange={setSettings} onClose={closeSettings} />
-      )}
-    </main>
+      {settingsOpen
+        ? createPortal(
+            <SettingsModal settings={settings} onChange={setSettings} onClose={closeSettings} />,
+            document.body
+          )
+        : null}
+    </>
   )
 }
 
 function TopBar({
   settingsOpen,
-  onOpenSettings
+  onOpenSettings,
+  onOpenAlignment,
+  alignmentPhase,
+  alignmentBatchIndex,
+  alignmentBatchTotal,
+  alignmentMatched,
+  alignmentTotal
 }: {
   settingsOpen: boolean
   onOpenSettings: () => void
+  onOpenAlignment: () => void
+  alignmentPhase: AlignmentSession['phase']
+  alignmentBatchIndex: number
+  alignmentBatchTotal: number
+  alignmentMatched: number
+  alignmentTotal: number
 }): JSX.Element {
+  const aligning = alignmentPhase === 'aligning'
+  const showLiveMeta = alignmentPhase === 'aligning' || alignmentPhase === 'complete'
+
   return (
     <header className="app-toolbar">
       <div className="app-toolbar__strip" role="toolbar" aria-label="主工具栏">
+        <button
+          type="button"
+          className="toolbar-btn toolbar-btn--primary-action"
+          disabled={aligning}
+          onClick={onOpenAlignment}
+        >
+          Start AI Alignment
+        </button>
+        <span className="toolbar-sep" aria-hidden />
         <button type="button" className="toolbar-btn">
           导入中文 SRT
         </button>
@@ -198,8 +371,21 @@ function TopBar({
       </div>
 
       <div className="app-toolbar__meta type-toolbar-meta hidden text-right sm:block">
-        <p className="text-primary font-semibold">Batch 3 / 12</p>
-        <p className="text-secondary mt-0.5 leading-tight">132 / 148 matched</p>
+        {showLiveMeta ? (
+          <>
+            <p className="text-primary font-semibold tabular-nums">
+              Batch {alignmentBatchIndex} / {alignmentBatchTotal}
+            </p>
+            <p className="text-secondary mt-0.5 leading-tight tabular-nums">
+              {alignmentMatched} / {alignmentTotal} matched
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-primary font-semibold">AI alignment</p>
+            <p className="text-secondary mt-0.5 leading-tight">Run from toolbar to begin</p>
+          </>
+        )}
       </div>
     </header>
   )
@@ -217,7 +403,7 @@ function SubtitleNavigator({
   onSelect: (id: string) => void
 }): JSX.Element {
   return (
-    <aside className="app-panel flex min-h-0 min-w-0 flex-col">
+    <aside className="app-panel app-panel--sidebar flex min-h-0 min-w-0 flex-col">
       <div className="app-panel-header nav-panel-head px-3 py-2">
         <h2 className="ui-section-title">Subtitles</h2>
         <p className="type-caption mt-0.5">{subtitles.length} lines</p>
@@ -270,7 +456,7 @@ function AlignmentWorkspace({
   const meta = statusMeta[selected.status]
 
   return (
-    <section className="app-panel flex min-h-0 min-w-0 flex-col overflow-hidden">
+    <section className="app-panel app-panel--primary flex min-h-0 min-w-0 flex-col overflow-hidden">
       <div className="app-panel-header workspace-head shrink-0 px-4 py-3">
         <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
           <div>
@@ -338,13 +524,16 @@ function AlignmentWorkspace({
   )
 }
 
-function AlignmentStatus({ settings }: { settings: SettingsState }): JSX.Element {
-  const progressPct = 67
+function AlignmentStatus({ settings, session }: { settings: SettingsState; session: AlignmentSession }): JSX.Element {
+  const progressPct = session.phase === 'idle' ? 0 : Math.round(session.progressPct)
+  const matchedLine = `${session.matched} / ${session.total}`
+  const inBatch = subtitlesInCurrentBatch(session)
 
   return (
     <aside className="app-panel alignment-panel flex min-h-0 min-w-0 flex-col overflow-hidden">
       <div className="app-panel-header alignment-panel__head shrink-0 px-3 py-2.5">
         <h2 className="ui-section-title">Alignment</h2>
+        <p className="type-caption alignment-monitor-tag mt-1">AI session monitor</p>
         <p className="type-caption mt-1 leading-snug">
           {settings.provider} · <span className="text-secondary">{settings.model}</span>
         </p>
@@ -364,14 +553,24 @@ function AlignmentStatus({ settings }: { settings: SettingsState }): JSX.Element
         <div>
           <p className="type-field-label mb-1">Current batch</p>
           <p className="type-panel-stat tabular-nums">
-            3 <span className="type-caption font-medium">/</span> 12
+            {session.phase === 'idle' || session.batchTotal === 0 ? (
+              '—'
+            ) : (
+              <>
+                {session.batchIndex} <span className="type-caption font-medium">/</span> {session.batchTotal}
+              </>
+            )}
           </p>
-          <p className="type-caption mt-1">24 subtitles in this batch</p>
+          <p className="type-caption mt-1">
+            {session.phase === 'idle' || session.batchTotal === 0
+              ? 'No active batch'
+              : `${inBatch} subtitle${inBatch === 1 ? '' : 's'} in this batch`}
+          </p>
         </div>
 
         <div className="metric-stack space-y-3">
-          <Metric label="Matched" value="132 / 148" />
-          <Metric label="State" value="Aligning" />
+          <Metric label="Matched" value={matchedLine} />
+          <Metric label="State" value={alignmentStateLabel(session.phase)} />
         </div>
       </div>
     </aside>
@@ -414,8 +613,8 @@ function TimelineSimulator({
   onSeek: (value: number) => void
 }): JSX.Element {
   return (
-    <section className="timeline-dock grid min-h-0 min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_minmax(8.5rem,0.4fr)] gap-3 px-3 py-2 sm:gap-4 sm:px-4">
-      <div className="grid min-h-0 min-w-0 grid-cols-[minmax(5.5rem,6.75rem)_minmax(0,1fr)] items-stretch gap-3 sm:gap-4">
+    <section className="timeline-dock grid min-h-0 min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_minmax(8.5rem,0.4fr)] gap-5">
+      <div className="grid min-h-0 min-w-0 grid-cols-[minmax(5.5rem,6.75rem)_minmax(0,1fr)] items-stretch gap-5">
         <div className="transport-tower">
           <button
             type="button"
@@ -491,6 +690,202 @@ function ProblemItem({ label }: { label: string }): JSX.Element {
   return <p className="problem-item">▲ {label}</p>
 }
 
+function AlignmentWorkflowModal({
+  settings,
+  subtitleCount,
+  onClose,
+  onRun
+}: {
+  settings: SettingsState
+  subtitleCount: number
+  onClose: () => void
+  onRun: (draft: AlignmentWorkflowDraft) => void
+}): JSX.Element {
+  const panelRef = useRef<HTMLDivElement>(null)
+  const [draft, setDraft] = useState<AlignmentWorkflowDraft>(() => ({
+    model: settings.model,
+    batchSize: settings.batchSize,
+    confidenceThreshold: settings.confidenceThreshold,
+    mode: 'semanticHybrid',
+    semanticStrength: 'medium',
+    retryFailed: true
+  }))
+
+  useEffect(() => {
+    panelRef.current?.focus()
+  }, [])
+
+  useEffect(() => {
+    function handleEscape(event: KeyboardEvent): void {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handleEscape)
+    return () => window.removeEventListener('keydown', handleEscape)
+  }, [onClose])
+
+  useEffect(() => {
+    setDraft((d) => ({
+      ...d,
+      model: settings.model,
+      batchSize: settings.batchSize,
+      confidenceThreshold: settings.confidenceThreshold
+    }))
+  }, [settings.model, settings.batchSize, settings.confidenceThreshold])
+
+  function handleBackdropClick(event: MouseEvent<HTMLDivElement>): void {
+    if (event.target === event.currentTarget) onClose()
+  }
+
+  function patchDraft(patch: Partial<AlignmentWorkflowDraft>): void {
+    setDraft((d) => ({ ...d, ...patch }))
+  }
+
+  const estTokens = estimateApiUsageTokens(draft, subtitleCount)
+  const estLabel = estTokens >= 1000 ? `~${(estTokens / 1000).toFixed(1)}k tokens` : `~${estTokens} tokens`
+
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={handleBackdropClick}>
+      <div
+        ref={panelRef}
+        className="modal-dialog modal-dialog--workflow"
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="alignment-workflow-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="modal-header flex h-14 shrink-0 items-center justify-between px-5">
+          <h2 id="alignment-workflow-title" className="text-primary text-[16px] font-semibold tracking-tight">
+            Start AI Alignment
+          </h2>
+          <button
+            type="button"
+            className="text-meta rounded-lg px-2 text-2xl leading-none hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text-primary)]"
+            onClick={onClose}
+            aria-label="Close alignment workflow"
+          >
+            ×
+          </button>
+        </header>
+
+        <div className="modal-body-scroll min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          <p className="text-secondary mb-4 text-[13px] leading-relaxed">
+            Configure how the model processes your subtitles. Nothing runs until you choose <span className="text-primary font-medium">Run Alignment</span>.
+          </p>
+
+          <div className="space-y-5">
+            <section className="settings-section">
+              <h3 className="settings-heading">Model &amp; batches</h3>
+              <label className="settings-label">
+                Model
+                <select className="settings-select mt-1 w-full" value={draft.model} onChange={(e) => patchDraft({ model: e.currentTarget.value })}>
+                  <option>可选模型</option>
+                  <option>deepseek-chat</option>
+                  <option>deepseek-reasoner</option>
+                </select>
+              </label>
+              <label className="settings-label mt-3">
+                Batch size
+                <select
+                  className="settings-select mt-1 w-full"
+                  value={draft.batchSize}
+                  onChange={(e) => patchDraft({ batchSize: Number(e.currentTarget.value) })}
+                >
+                  <option value={8}>8</option>
+                  <option value={12}>12</option>
+                  <option value={16}>16</option>
+                  <option value={20}>20</option>
+                  <option value={24}>24</option>
+                </select>
+              </label>
+              <label className="settings-label mt-3">
+                Confidence threshold
+                <select
+                  className="settings-select mt-1 w-full"
+                  value={draft.confidenceThreshold}
+                  onChange={(e) => patchDraft({ confidenceThreshold: Number(e.currentTarget.value) })}
+                >
+                  <option value={60}>60%</option>
+                  <option value={70}>70%</option>
+                  <option value={80}>80%</option>
+                  <option value={90}>90%</option>
+                </select>
+              </label>
+            </section>
+
+            <section className="settings-section">
+              <h3 className="settings-heading">Alignment mode</h3>
+              <p className="settings-label">How lines are matched to the script</p>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <RadioCard
+                  checked={draft.mode === 'sequential'}
+                  label="Sequential"
+                  name="alignment-mode"
+                  onChange={() => patchDraft({ mode: 'sequential' })}
+                />
+                <RadioCard
+                  checked={draft.mode === 'semanticHybrid'}
+                  label="Semantic hybrid"
+                  name="alignment-mode"
+                  onChange={() => patchDraft({ mode: 'semanticHybrid' })}
+                />
+              </div>
+              <p className="settings-label mt-4">Semantic match strength</p>
+              <div className="mt-2 grid grid-cols-3 gap-2">
+                <RadioCard
+                  checked={draft.semanticStrength === 'low'}
+                  label="Low"
+                  name="semantic-strength"
+                  onChange={() => patchDraft({ semanticStrength: 'low' })}
+                />
+                <RadioCard
+                  checked={draft.semanticStrength === 'medium'}
+                  label="Med"
+                  name="semantic-strength"
+                  onChange={() => patchDraft({ semanticStrength: 'medium' })}
+                />
+                <RadioCard
+                  checked={draft.semanticStrength === 'high'}
+                  label="High"
+                  name="semantic-strength"
+                  onChange={() => patchDraft({ semanticStrength: 'high' })}
+                />
+              </div>
+              <div className="mt-4">
+                <Toggle checked={draft.retryFailed} label="Retry failed matches" onChange={() => patchDraft({ retryFailed: !draft.retryFailed })} />
+              </div>
+            </section>
+
+            <section className="settings-section">
+              <h3 className="settings-heading">Estimates</h3>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="metric-card">
+                  <p className="type-field-label mb-1">Subtitle count</p>
+                  <p className="type-panel-stat tabular-nums">{subtitleCount}</p>
+                </div>
+                <div className="metric-card">
+                  <p className="type-field-label mb-1">Est. API usage</p>
+                  <p className="type-panel-stat tabular-nums">{estLabel}</p>
+                  <p className="type-caption mt-1">Heuristic before billing</p>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <footer className="modal-footer flex shrink-0 flex-wrap items-center justify-end gap-3 px-5 py-4">
+          <button type="button" className="settings-footer-button btn-secondary-solid" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" className="settings-footer-button btn-accent-solid" onClick={() => onRun(draft)}>
+            Run Alignment
+          </button>
+        </footer>
+      </div>
+    </div>
+  )
+}
+
 function SettingsModal({
   settings,
   onChange,
@@ -506,32 +901,42 @@ function SettingsModal({
     panelRef.current?.focus()
   }, [])
 
+  useEffect(() => {
+    function handleEscape(event: KeyboardEvent): void {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handleEscape)
+    return () => window.removeEventListener('keydown', handleEscape)
+  }, [onClose])
+
   function update(patch: Partial<SettingsState>): void {
     onChange({ ...settings, ...patch })
   }
 
+  function handleBackdropClick(event: MouseEvent<HTMLDivElement>): void {
+    if (event.target === event.currentTarget) onClose()
+  }
+
   return (
-    <div
-      className="modal-backdrop fixed inset-0 z-[9999] flex items-center justify-center overflow-y-auto p-4 backdrop-blur-sm"
-      role="presentation"
-    >
+    <div className="modal-backdrop" role="presentation" onClick={handleBackdropClick}>
       <div
         ref={panelRef}
-        className="modal-dialog relative flex max-h-[92vh] w-full max-w-[520px] flex-col overflow-hidden outline-none"
+        className="modal-dialog"
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-modal-title"
+        onClick={(event) => event.stopPropagation()}
       >
         <header className="modal-header flex h-14 shrink-0 items-center justify-between px-5">
           <h2 id="settings-modal-title" className="text-primary text-[16px] font-semibold tracking-tight">
-            Settings
+            设置
           </h2>
           <button
             type="button"
             className="text-meta rounded-lg px-2 text-2xl leading-none hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text-primary)]"
             onClick={onClose}
-            aria-label="Close settings"
+            aria-label="关闭设置"
           >
             ×
           </button>
@@ -564,8 +969,8 @@ function SettingsContent({
   return (
     <div className="space-y-5">
       <section className="settings-section">
-        <h3 className="settings-heading">API Key</h3>
-        <FieldRow label="Provider">
+        <h3 className="settings-heading">API 密钥</h3>
+        <FieldRow label="服务商">
           <select className="settings-select" value={settings.provider} onChange={(event) => onUpdate({ provider: event.currentTarget.value })}>
             <option>Deepseek</option>
           </select>
@@ -573,31 +978,31 @@ function SettingsContent({
         <div className="mt-3 flex">
           <input
             className="settings-input rounded-r-none"
-            placeholder="Input API Key"
+            placeholder="请输入 API Key"
             type="password"
             value={settings.apiKey}
             onChange={(event) => onUpdate({ apiKey: event.currentTarget.value })}
           />
           <button type="button" className="btn-paste">
-            Paste
+            粘贴
           </button>
         </div>
         <button type="button" className="btn-accent-ghost mt-3 px-3 py-2 text-sm font-semibold">
-          Connection Test
+          连接测试
         </button>
       </section>
 
       <section className="settings-section">
-        <h3 className="settings-heading">AI Alignment Settings</h3>
+        <h3 className="settings-heading">AI 对齐设置</h3>
         <label className="settings-label">
-          Model
+          模型
           <select className="settings-select mt-1 w-full" value={settings.model} onChange={(event) => onUpdate({ model: event.currentTarget.value })}>
             <option>可选模型</option>
             <option>deepseek-chat</option>
           </select>
         </label>
         <label className="settings-label mt-3">
-          Batch Size
+          每批条数
           <select
             className="settings-select mt-1 w-full"
             value={settings.batchSize}
@@ -608,7 +1013,7 @@ function SettingsContent({
           </select>
         </label>
         <label className="settings-label mt-3">
-          Confidence Threshold
+          置信度阈值
           <select
             className="settings-select mt-1 w-full"
             value={settings.confidenceThreshold}
@@ -621,31 +1026,31 @@ function SettingsContent({
         <div className="mt-4">
           <Toggle
             checked={settings.autoMarkHighConfidence}
-            label="Auto-mark high confidence"
+            label="高置信度自动标记"
             onChange={() => onUpdate({ autoMarkHighConfidence: !settings.autoMarkHighConfidence })}
           />
         </div>
       </section>
 
       <section className="settings-section">
-        <h3 className="settings-heading">Export Settings</h3>
-        <p className="settings-label">Subtitle Order</p>
+        <h3 className="settings-heading">导出设置</h3>
+        <p className="settings-label">字幕顺序</p>
         <div className="mt-2 grid grid-cols-2 gap-2">
           <RadioCard
             checked={settings.subtitleOrder === 'chineseFirst'}
-            label="Chinese First"
+            label="中文优先"
             name="subtitle-order"
             onChange={() => onUpdate({ subtitleOrder: 'chineseFirst' })}
           />
           <RadioCard
             checked={settings.subtitleOrder === 'englishFirst'}
-            label="English First"
+            label="英文优先"
             name="subtitle-order"
             onChange={() => onUpdate({ subtitleOrder: 'englishFirst' })}
           />
         </div>
         <label className="settings-label mt-3">
-          Export Format
+          导出格式
           <select className="settings-select mt-1 w-full" value={settings.exportFormat} onChange={() => onUpdate({ exportFormat: '.srt' })}>
             <option>.srt</option>
           </select>
@@ -653,21 +1058,21 @@ function SettingsContent({
         <div className="mt-4">
           <Toggle
             checked={settings.separateLines}
-            label="Separate Chinese and English"
+            label="中英文分行显示"
             onChange={() => onUpdate({ separateLines: !settings.separateLines })}
           />
         </div>
       </section>
 
       <section className="settings-section">
-        <h3 className="settings-heading">Appearance</h3>
-        <p className="settings-label">Theme</p>
+        <h3 className="settings-heading">外观</h3>
+        <p className="settings-label">主题</p>
         <div className="mt-2 grid grid-cols-2 gap-2">
-          <RadioCard checked={settings.theme === 'light'} label="Light" name="theme" onChange={() => onUpdate({ theme: 'light' })} />
-          <RadioCard checked={settings.theme === 'dark'} label="Dark" name="theme" onChange={() => onUpdate({ theme: 'dark' })} />
+          <RadioCard checked={settings.theme === 'light'} label="浅色" name="theme" onChange={() => onUpdate({ theme: 'light' })} />
+          <RadioCard checked={settings.theme === 'dark'} label="深色" name="theme" onChange={() => onUpdate({ theme: 'dark' })} />
         </div>
         <label className="settings-label mt-3">
-          Font Size
+          字号
           <select
             className="settings-select mt-1 w-full"
             value={settings.fontSize}
@@ -684,7 +1089,7 @@ function SettingsContent({
 
 function FieldRow({ label, children }: { label: string; children: ReactNode }): JSX.Element {
   return (
-    <label className="settings-label grid grid-cols-[110px_minmax(0,1fr)] items-center gap-3">
+    <label className="settings-label grid grid-cols-[minmax(5.5rem,7.5rem)_minmax(0,1fr)] items-center gap-3">
       <span className="text-meta">{label}</span>
       {children}
     </label>
@@ -719,13 +1124,26 @@ function Toggle({
   label: string
   onChange: () => void
 }): JSX.Element {
+  const labelId = useId()
+
   return (
-    <button type="button" className="toggle-row" onClick={onChange}>
-      <span className="text-secondary text-sm font-medium">{label}</span>
-      <span className={`toggle-track ${checked ? 'toggle-track-on' : 'toggle-track-off'}`}>
-        <span className="h-4 w-4 rounded-full bg-white shadow" />
+    <div className="setting-toggle">
+      <span className="setting-toggle__label" id={labelId}>
+        {label}
       </span>
-    </button>
+      <button
+        type="button"
+        className="switch-root"
+        role="switch"
+        aria-checked={checked}
+        aria-labelledby={labelId}
+        onClick={onChange}
+      >
+        <span className="switch-track" data-state={checked ? 'checked' : 'unchecked'}>
+          <span className="switch-thumb" aria-hidden />
+        </span>
+      </button>
+    </div>
   )
 }
 

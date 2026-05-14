@@ -1,0 +1,356 @@
+/* -------------------------------------------------------------------------- */
+/*  Theme tokens — Dark default (:root), Light via html[data-theme="light"]   */
+/*  Application code should use these variables, not raw hex in components.   */
+/* -------------------------------------------------------------------------- */
+
+:root {
+  /* ----- foundation ----- */
+  --color-bg-app: #111827;
+  --color-bg-sidebar: #1e293b;
+  --color-bg-panel: #1e293b;
+  --color-bg-elevated: #1e293b;
+  --color-bg-input: #0f172a;
+  --color-bg-hover: #334155;
+
+  --color-border: #475569;
+  --color-border-subtle: #334155;
+
+  --color-text-primary: #f8fafc;
+  --color-text-secondary: #cbd5e1;
+  --color-text-meta: #94a3b8;
+  --color-text-disabled: #64748b;
+
+  --color-accent: #38bdf8;
+  --color-accent-strong: #0ea5e9;
+  --color-accent-hover: #7dd3fc;
+  --color-accent-muted: #bae6fd;
+  --color-accent-glow: rgba(56, 189, 248, 0.22);
+  --color-on-accent: #0f172a;
+  --color-on-accent-contrast: #f8fafc;
+
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-danger: #fb7185;
+  --color-info: #38bdf8;
+
+  /* In-player preview strip — always dark */
+  --color-preview-black: #000000;
+  --color-playback-preview-zh: #f8fafc;
+  --color-playback-preview-en: #cbd5e1;
+  --color-preview-outer: #1e293b;
+
+  /* Toolbar */
+  --color-toolbar-bg: #141b27;
+  --color-toolbar-well: rgba(148, 163, 184, 0.07);
+  --color-toolbar-sep: rgba(148, 163, 184, 0.18);
+  --color-toolbar-bottom-border: rgba(71, 85, 105, 0.35);
+  --color-toolbar-inset-line: rgba(255, 255, 255, 0.028);
+
+  --color-panel-header-border: rgba(71, 85, 105, 0.28);
+  --color-panel-header-shine: rgba(255, 255, 255, 0.03);
+
+  /* Subtitle list */
+  --color-list-item-bg: rgba(15, 23, 42, 0.55);
+  --color-list-item-hover-bg: rgba(51, 65, 85, 0.55);
+  --color-list-item-hover-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+  --color-list-selected-bg: rgba(51, 65, 85, 0.65);
+  --color-list-selected-shadow-mid: 0 6px 18px rgba(0, 0, 0, 0.22);
+
+  /* Editors */
+  --color-editor-bg: rgba(15, 23, 42, 0.72);
+  --color-editor-border: transparent;
+  --color-editor-focus-bg: #0b1224;
+  --color-editor-focus-ring: rgba(56, 189, 248, 0.12);
+
+  /* Surfaces */
+  --color-well-bg: rgba(15, 23, 42, 0.55);
+  --color-card-bg: rgba(30, 41, 59, 0.65);
+  --color-card-hover-bg: rgba(51, 65, 85, 0.85);
+  --color-card-hover-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
+  --color-metric-bg: rgba(15, 23, 42, 0.55);
+
+  --color-confidence-track-bg: rgba(51, 65, 85, 0.65);
+  --color-confidence-track-inset: rgba(255, 255, 255, 0.04);
+
+  /* Candidate row */
+  --color-candidate-selected-bg: rgba(56, 189, 248, 0.1);
+  --color-candidate-selected-border: rgba(56, 189, 248, 0.45);
+  --color-candidate-selected-glow: 0 6px 20px rgba(56, 189, 248, 0.12);
+  --color-candidate-selected-hover-bg: rgba(56, 189, 248, 0.14);
+  --color-candidate-selected-hover-border: rgba(56, 189, 248, 0.55);
+  --color-candidate-selected-hover-glow: 0 10px 26px rgba(56, 189, 248, 0.14);
+  --color-candidate-score-border: rgba(56, 189, 248, 0.65);
+  --color-candidate-score-gradient-top: rgba(56, 189, 248, 0.42);
+  --color-candidate-score-gradient-bottom: rgba(14, 165, 233, 0.32);
+  --color-candidate-score-text: #f0f9ff;
+  --color-candidate-score-glow: rgba(56, 189, 248, 0.25);
+  --color-candidate-score-shine: rgba(255, 255, 255, 0.18);
+
+  /* Status badges */
+  --color-badge-confirmed-border: #34d399;
+  --color-badge-confirmed-bg: rgba(52, 211, 153, 0.18);
+  --color-badge-low-border: #fbbf24;
+  --color-badge-low-bg: rgba(251, 191, 36, 0.16);
+  --color-badge-edited-border: var(--color-accent);
+  --color-badge-edited-bg: rgba(56, 189, 248, 0.16);
+  --color-badge-unmatched-border: #fb7185;
+  --color-badge-unmatched-bg: rgba(251, 113, 133, 0.16);
+
+  --color-dot-low: #fcd34d;
+
+  /* Toolbar controls */
+  --color-toolbar-btn-hover-bg: rgba(51, 65, 85, 0.75);
+  --color-toolbar-btn-active-bg: rgba(51, 65, 85, 0.92);
+  --color-toolbar-accent-outline: rgba(56, 189, 248, 0.32);
+  --color-toolbar-accent-bg: rgba(56, 189, 248, 0.08);
+  --color-toolbar-accent-text: #e0f2fe;
+  --color-toolbar-accent-hover-bg: rgba(56, 189, 248, 0.14);
+  --color-toolbar-accent-hover-border: rgba(56, 189, 248, 0.45);
+  --color-toolbar-accent-active-bg: rgba(56, 189, 248, 0.2);
+  --color-toolbar-active-bg: rgba(56, 189, 248, 0.12);
+  --color-toolbar-active-ring: rgba(56, 189, 248, 0.28);
+  --color-toolbar-active-hover-bg: rgba(56, 189, 248, 0.16);
+  --color-toolbar-accent-disabled-border: rgba(56, 189, 248, 0.22);
+  --color-toolbar-accent-disabled-bg: rgba(56, 189, 248, 0.05);
+
+  /* Buttons (settings / modals) */
+  --color-btn-primary-bg: var(--color-accent);
+  --color-btn-primary-hover-bg: #7dd3fc;
+  --color-btn-primary-text: #0f172a;
+  --color-btn-primary-inset-shadow: rgba(15, 23, 42, 0.15);
+
+  --color-btn-secondary-bg: var(--color-bg-hover);
+  --color-btn-secondary-hover-bg: #475569;
+  --color-btn-secondary-border: var(--color-border);
+
+  --color-radio-selected-bg: rgba(56, 189, 248, 0.12);
+
+  --color-btn-ghost-border: rgba(56, 189, 248, 0.55);
+  --color-btn-ghost-bg: rgba(56, 189, 248, 0.12);
+  --color-btn-ghost-hover-bg: rgba(56, 189, 248, 0.22);
+
+  --color-switch-track-off: #475569;
+  --color-switch-track-off-hover: #64748b;
+
+  /* Progress */
+  --color-progress-track-bg: rgba(51, 65, 85, 0.55);
+  --color-progress-track-inset: rgba(255, 255, 255, 0.04);
+  --color-progress-fill-glow: rgba(56, 189, 248, 0.35);
+
+  /* Transport / timeline chrome */
+  --color-transport-surface: rgba(30, 41, 59, 0.55);
+  --color-play-gradient-top: #7dd3fc;
+  --color-play-gradient-bottom: var(--color-accent);
+  --color-play-icon: #0f172a;
+  --color-nudge-bg: rgba(15, 23, 42, 0.72);
+  --color-nudge-border: rgba(71, 85, 105, 0.4);
+  --color-nudge-hover-bg: rgba(51, 65, 85, 0.95);
+  --color-stop-bg: rgba(15, 23, 42, 0.55);
+  --color-stop-hover-bg: rgba(51, 65, 85, 0.9);
+  --color-playback-shell-bg: rgba(30, 41, 59, 0.45);
+  --color-timeline-track-bg: rgba(51, 65, 85, 0.65);
+  --color-timeline-track-inset: rgba(255, 255, 255, 0.04);
+  --color-playback-frame-inset: rgba(255, 255, 255, 0.05);
+  --color-playback-frame-vignette: rgba(0, 0, 0, 0.55);
+
+  /* Problems */
+  --color-problems-panel-bg: rgba(30, 41, 59, 0.55);
+  --color-problems-panel-shadow: 0 8px 28px rgba(0, 0, 0, 0.2);
+  --color-problem-border: rgba(245, 158, 11, 0.45);
+  --color-problem-bg-top: rgba(254, 243, 199, 0.12);
+  --color-problem-bg-bottom: rgba(251, 191, 36, 0.08);
+  --color-problem-text: #fffbeb;
+  --color-problem-inset: rgba(245, 158, 11, 0.12);
+
+  --color-modal-backdrop: rgba(15, 23, 42, 0.78);
+
+  --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 10px 36px rgba(0, 0, 0, 0.28);
+  --shadow-ring: 0 0 0 1px rgba(71, 85, 105, 0.22);
+  --shadow-ring-accent: 0 0 0 1px rgba(56, 189, 248, 0.35);
+  --shadow-lift: 0 6px 22px rgba(0, 0, 0, 0.38);
+
+  /* Workbench: floating surfaces (IDE / Resolve-style) */
+  --color-surface-outline: rgba(100, 116, 139, 0.28);
+  --shadow-surface-card: 0 22px 50px -20px rgba(0, 0, 0, 0.52), 0 0 0 1px rgba(15, 23, 42, 0.55);
+  --shadow-surface-card-primary: 0 28px 58px -22px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(15, 23, 42, 0.42), 0 0 52px -14px rgba(56, 189, 248, 0.1);
+  --shadow-surface-toolbar: 0 14px 34px -18px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(15, 23, 42, 0.48);
+  --shadow-surface-inset: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --color-dock-inset-bg: rgba(15, 23, 42, 0.42);
+
+  --color-scrollbar-corner: #111827;
+  --color-scrollbar-track: #111827;
+  --color-scrollbar-thumb: #334155;
+  --color-scrollbar-thumb-border: #111827;
+  --color-scrollbar-thumb-hover: #475569;
+  --color-scrollbar-fg: #334155;
+  --color-scrollbar-bg: #111827;
+}
+
+[data-theme='light'] {
+  --color-bg-app: #f8fafc;
+  --color-bg-sidebar: #f1f5f9;
+  --color-bg-panel: #ffffff;
+  --color-bg-elevated: #f8fafc;
+  --color-bg-input: #ffffff;
+  --color-bg-hover: #f1f5f9;
+
+  --color-border: #cbd5e1;
+  --color-border-subtle: #e2e8f0;
+
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #334155;
+  --color-text-meta: #64748b;
+  --color-text-disabled: #94a3b8;
+
+  --color-accent: #0284c7;
+  --color-accent-strong: #0369a1;
+  --color-accent-hover: #0369a1;
+  --color-accent-muted: #0369a1;
+  --color-accent-glow: rgba(2, 132, 199, 0.2);
+  --color-on-accent: #ffffff;
+  --color-on-accent-contrast: #f8fafc;
+
+  --color-success: #059669;
+  --color-warning: #d97706;
+  --color-danger: #dc2626;
+  --color-info: #0284c7;
+
+  --color-preview-black: #000000;
+  --color-playback-preview-zh: #f8fafc;
+  --color-playback-preview-en: #e2e8f0;
+  --color-preview-outer: #e2e8f0;
+
+  --color-toolbar-bg: #f8fafc;
+  --color-toolbar-well: rgba(15, 23, 42, 0.04);
+  --color-toolbar-sep: rgba(100, 116, 139, 0.35);
+  --color-toolbar-bottom-border: #e2e8f0;
+  --color-toolbar-inset-line: rgba(255, 255, 255, 0.9);
+
+  --color-panel-header-border: #e2e8f0;
+  --color-panel-header-shine: rgba(15, 23, 42, 0.04);
+
+  --color-list-item-bg: #f8fafc;
+  --color-list-item-hover-bg: #f1f5f9;
+  --color-list-item-hover-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+  --color-list-selected-bg: #e0f2fe;
+  --color-list-selected-shadow-mid: 0 4px 12px rgba(2, 132, 199, 0.12);
+
+  --color-editor-bg: #ffffff;
+  --color-editor-border: #e2e8f0;
+  --color-editor-focus-bg: #ffffff;
+  --color-editor-focus-ring: rgba(2, 132, 199, 0.22);
+
+  --color-well-bg: #f8fafc;
+  --color-card-bg: #f8fafc;
+  --color-card-hover-bg: #f1f5f9;
+  --color-card-hover-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+  --color-metric-bg: #f8fafc;
+
+  --color-confidence-track-bg: #e2e8f0;
+  --color-confidence-track-inset: rgba(15, 23, 42, 0.06);
+
+  --color-candidate-selected-bg: #e0f2fe;
+  --color-candidate-selected-border: rgba(2, 132, 199, 0.45);
+  --color-candidate-selected-glow: 0 4px 14px rgba(2, 132, 199, 0.15);
+  --color-candidate-selected-hover-bg: #bae6fd;
+  --color-candidate-selected-hover-border: rgba(2, 132, 199, 0.55);
+  --color-candidate-selected-hover-glow: 0 8px 22px rgba(2, 132, 199, 0.18);
+  --color-candidate-score-border: #0369a1;
+  --color-candidate-score-gradient-top: #0ea5e9;
+  --color-candidate-score-gradient-bottom: #0284c7;
+  --color-candidate-score-text: #ffffff;
+  --color-candidate-score-glow: rgba(2, 132, 199, 0.28);
+  --color-candidate-score-shine: rgba(255, 255, 255, 0.22);
+
+  --color-badge-confirmed-border: #059669;
+  --color-badge-confirmed-bg: rgba(5, 150, 105, 0.12);
+  --color-badge-low-border: #d97706;
+  --color-badge-low-bg: rgba(217, 119, 6, 0.12);
+  --color-badge-edited-border: #0284c7;
+  --color-badge-edited-bg: rgba(2, 132, 199, 0.1);
+  --color-badge-unmatched-border: #dc2626;
+  --color-badge-unmatched-bg: rgba(220, 38, 38, 0.1);
+
+  --color-dot-low: #d97706;
+
+  --color-toolbar-btn-hover-bg: #e2e8f0;
+  --color-toolbar-btn-active-bg: #cbd5e1;
+  --color-toolbar-accent-outline: rgba(2, 132, 199, 0.35);
+  --color-toolbar-accent-bg: rgba(2, 132, 199, 0.08);
+  --color-toolbar-accent-text: #0369a1;
+  --color-toolbar-accent-hover-bg: rgba(2, 132, 199, 0.12);
+  --color-toolbar-accent-hover-border: rgba(2, 132, 199, 0.45);
+  --color-toolbar-accent-active-bg: rgba(2, 132, 199, 0.16);
+  --color-toolbar-active-bg: rgba(2, 132, 199, 0.1);
+  --color-toolbar-active-ring: rgba(2, 132, 199, 0.35);
+  --color-toolbar-active-hover-bg: rgba(2, 132, 199, 0.14);
+  --color-toolbar-accent-disabled-border: rgba(2, 132, 199, 0.2);
+  --color-toolbar-accent-disabled-bg: rgba(2, 132, 199, 0.06);
+
+  --color-btn-primary-bg: #0284c7;
+  --color-btn-primary-hover-bg: #0369a1;
+  --color-btn-primary-text: #ffffff;
+  --color-btn-primary-inset-shadow: rgba(255, 255, 255, 0.2);
+
+  --color-btn-secondary-bg: #f1f5f9;
+  --color-btn-secondary-hover-bg: #e2e8f0;
+  --color-btn-secondary-border: #cbd5e1;
+
+  --color-radio-selected-bg: rgba(2, 132, 199, 0.1);
+
+  --color-btn-ghost-border: rgba(2, 132, 199, 0.45);
+  --color-btn-ghost-bg: rgba(2, 132, 199, 0.08);
+  --color-btn-ghost-hover-bg: rgba(2, 132, 199, 0.14);
+
+  --color-switch-track-off: #cbd5e1;
+  --color-switch-track-off-hover: #94a3b8;
+
+  --color-progress-track-bg: #e2e8f0;
+  --color-progress-track-inset: rgba(15, 23, 42, 0.06);
+  --color-progress-fill-glow: rgba(2, 132, 199, 0.35);
+
+  --color-transport-surface: #f1f5f9;
+  --color-play-gradient-top: #38bdf8;
+  --color-play-gradient-bottom: #0284c7;
+  --color-play-icon: #ffffff;
+  --color-nudge-bg: #ffffff;
+  --color-nudge-border: #e2e8f0;
+  --color-nudge-hover-bg: #f1f5f9;
+  --color-stop-bg: #f8fafc;
+  --color-stop-hover-bg: #e2e8f0;
+  --color-playback-shell-bg: #ffffff;
+  --color-timeline-track-bg: #e2e8f0;
+  --color-timeline-track-inset: rgba(15, 23, 42, 0.06);
+  --color-playback-frame-inset: rgba(15, 23, 42, 0.1);
+  --color-playback-frame-vignette: rgba(0, 0, 0, 0.45);
+
+  --color-problems-panel-bg: #ffffff;
+  --color-problems-panel-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  --color-problem-border: rgba(217, 119, 6, 0.5);
+  --color-problem-bg-top: #fef9c3;
+  --color-problem-bg-bottom: #fef08a;
+  --color-problem-text: #713f12;
+  --color-problem-inset: rgba(217, 119, 6, 0.28);
+
+  --color-modal-backdrop: rgba(15, 23, 42, 0.45);
+
+  --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.92) inset, 0 10px 28px rgba(15, 23, 42, 0.06);
+  --shadow-ring: 0 0 0 1px #e2e8f0;
+  --shadow-ring-accent: 0 0 0 1px rgba(2, 132, 199, 0.35);
+  --shadow-lift: 0 14px 40px rgba(15, 23, 42, 0.12);
+
+  --color-surface-outline: #e2e8f0;
+  --shadow-surface-card: 0 22px 46px -20px rgba(15, 23, 42, 0.11), 0 0 0 1px rgba(15, 23, 42, 0.07);
+  --shadow-surface-card-primary: 0 30px 54px -22px rgba(15, 23, 42, 0.13), 0 0 0 1px rgba(15, 23, 42, 0.06), 0 0 44px -12px rgba(2, 132, 199, 0.14);
+  --shadow-surface-toolbar: 0 16px 38px -18px rgba(15, 23, 42, 0.09), 0 0 0 1px rgba(15, 23, 42, 0.06);
+  --shadow-surface-inset: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  --color-dock-inset-bg: #f1f5f9;
+
+  --color-scrollbar-corner: #f8fafc;
+  --color-scrollbar-track: #f1f5f9;
+  --color-scrollbar-thumb: #cbd5e1;
+  --color-scrollbar-thumb-border: #f8fafc;
+  --color-scrollbar-thumb-hover: #94a3b8;
+  --color-scrollbar-fg: #cbd5e1;
+  --color-scrollbar-bg: #f1f5f9;
+}
