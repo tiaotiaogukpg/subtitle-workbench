@@ -113,10 +113,10 @@ function App(): JSX.Element {
   }, [])
 
   return (
-    <main className="app-root relative flex min-h-screen flex-col font-sans text-[13px] leading-normal antialiased">
+    <main className="app-root relative flex h-screen min-h-0 flex-col gap-4 overflow-hidden font-sans text-[13px] leading-normal antialiased">
       <TopBar settingsOpen={settingsOpen} onOpenSettings={openSettings} />
 
-      <section className="grid min-h-0 flex-1 grid-cols-[minmax(220px,252px)_minmax(0,1fr)_minmax(176px,200px)] gap-3 px-3 py-3">
+      <section className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(8.25rem,0.27fr)_minmax(0,1fr)_minmax(7rem,0.23fr)] gap-3 px-3 py-2 sm:gap-4 sm:px-4">
         <SubtitleNavigator
           activeId={activeId}
           selectedId={selected.id}
@@ -217,13 +217,13 @@ function SubtitleNavigator({
   onSelect: (id: string) => void
 }): JSX.Element {
   return (
-    <aside className="app-panel flex min-h-0 flex-col">
+    <aside className="app-panel flex min-h-0 min-w-0 flex-col">
       <div className="app-panel-header nav-panel-head px-3 py-2">
         <h2 className="ui-section-title">Subtitles</h2>
         <p className="type-caption mt-0.5">{subtitles.length} lines</p>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overflow-x-hidden p-2">
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto overflow-x-hidden p-2">
         {subtitles.map((subtitle) => {
           const meta = statusMeta[subtitle.status]
           const selected = subtitle.id === selectedId
@@ -270,9 +270,9 @@ function AlignmentWorkspace({
   const meta = statusMeta[selected.status]
 
   return (
-    <section className="app-panel min-w-0 overflow-hidden">
-      <div className="app-panel-header workspace-head px-4 py-3">
-        <div className="flex items-start justify-between gap-3">
+    <section className="app-panel flex min-h-0 min-w-0 flex-col overflow-hidden">
+      <div className="app-panel-header workspace-head shrink-0 px-4 py-3">
+        <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
           <div>
             <p className="type-field-label">Current Subtitle</p>
             <h1 className="type-workspace-id mt-1">#{String(selected.index).padStart(3, '0')}</h1>
@@ -284,7 +284,7 @@ function AlignmentWorkspace({
         </div>
       </div>
 
-      <div className="workspace-body grid gap-3 p-4">
+      <div className="workspace-body grid min-h-0 flex-1 gap-4 overflow-y-auto p-4">
         <label className="block">
           <span className="type-field-label mb-1.5 block">Chinese Subtitle</span>
           <textarea
@@ -304,7 +304,7 @@ function AlignmentWorkspace({
         </label>
 
         <div className="candidate-well">
-          <div className="candidate-well__head mb-2 flex items-center justify-between gap-3">
+          <div className="candidate-well__head mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
             <div>
               <h2 className="type-panel-title">AI Candidate Matches</h2>
               <p className="type-caption mt-0.5">Line confidence {selected.confidence}%</p>
@@ -342,15 +342,15 @@ function AlignmentStatus({ settings }: { settings: SettingsState }): JSX.Element
   const progressPct = 67
 
   return (
-    <aside className="app-panel alignment-panel h-fit">
-      <div className="app-panel-header alignment-panel__head px-3 py-2.5">
+    <aside className="app-panel alignment-panel flex min-h-0 min-w-0 flex-col overflow-hidden">
+      <div className="app-panel-header alignment-panel__head shrink-0 px-3 py-2.5">
         <h2 className="ui-section-title">Alignment</h2>
         <p className="type-caption mt-1 leading-snug">
           {settings.provider} · <span className="text-secondary">{settings.model}</span>
         </p>
       </div>
 
-      <div className="alignment-panel__body space-y-3 p-3">
+      <div className="alignment-panel__body min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
         <div>
           <div className="mb-1 flex items-baseline justify-between gap-2">
             <span className="type-field-label">Run progress</span>
@@ -369,7 +369,7 @@ function AlignmentStatus({ settings }: { settings: SettingsState }): JSX.Element
           <p className="type-caption mt-1">24 subtitles in this batch</p>
         </div>
 
-        <div className="metric-stack space-y-2">
+        <div className="metric-stack space-y-3">
           <Metric label="Matched" value="132 / 148" />
           <Metric label="State" value="Aligning" />
         </div>
@@ -405,8 +405,8 @@ function TimelineSimulator({
   onSeek: (value: number) => void
 }): JSX.Element {
   return (
-    <section className="timeline-dock grid shrink-0 grid-cols-[minmax(0,1fr)_minmax(200px,240px)] gap-3 px-3 py-3">
-      <div className="grid grid-cols-[148px_minmax(0,1fr)] gap-3">
+    <section className="timeline-dock grid min-h-0 min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_minmax(8.5rem,0.4fr)] gap-3 px-3 py-2 sm:gap-4 sm:px-4">
+      <div className="grid min-h-0 min-w-0 grid-cols-[minmax(4.5rem,6.5rem)_minmax(0,1fr)] gap-3 sm:gap-4">
         <div className="transport-shelf flex items-center gap-1.5 p-2">
           <button type="button" className="media-button-primary" aria-label={isPlaying ? 'Pause simulator' : 'Play simulator'} onClick={onPlayToggle}>
             {isPlaying ? 'Ⅱ' : '▶'}
@@ -416,11 +416,11 @@ function TimelineSimulator({
           </button>
         </div>
 
-        <div className="playback-shell">
-          <div className="type-timeline-rail mb-2 flex items-center gap-2 font-mono tabular-nums">
-            <span>{compactTime(currentTimeMs)}</span>
+        <div className="playback-shell min-w-0">
+          <div className="type-timeline-rail mb-2 grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 font-mono tabular-nums">
+            <span className="shrink-0">{compactTime(currentTimeMs)}</span>
             <input
-              className="timeline-range"
+              className="timeline-range min-w-0"
               max={durationMs}
               min={0}
               step={100}
@@ -428,7 +428,7 @@ function TimelineSimulator({
               value={currentTimeMs}
               onChange={(event) => onSeek(Number(event.currentTarget.value))}
             />
-            <span>{compactTime(durationMs)}</span>
+            <span className="shrink-0 text-right">{compactTime(durationMs)}</span>
           </div>
 
           <div className="playback-preview">
@@ -440,9 +440,9 @@ function TimelineSimulator({
         </div>
       </div>
 
-      <aside className="problems-panel">
+      <aside className="problems-panel min-w-0">
         <h3 className="ui-section-title">Problems</h3>
-        <div className="mt-2 space-y-1.5">
+        <div className="mt-2 space-y-2">
           <ProblemItem label="Subtitle too long" />
           <ProblemItem label="Low confidence match" />
           <ProblemItem label="Reading speed too high" />
@@ -465,19 +465,10 @@ function SettingsModal({
   onChange: (settings: SettingsState) => void
   onClose: () => void
 }): JSX.Element {
-  const dialogRef = useRef<HTMLDialogElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const el = dialogRef.current
-    if (!el) return
-    if (!el.open) {
-      el.showModal()
-    }
-    return () => {
-      if (el.open) {
-        el.close()
-      }
-    }
+    panelRef.current?.focus()
   }, [])
 
   function update(patch: Partial<SettingsState>): void {
@@ -485,14 +476,26 @@ function SettingsModal({
   }
 
   return (
-    <dialog ref={dialogRef} className="settings-dialog" onClose={onClose}>
-      <div className="flex max-h-[92vh] min-h-0 flex-col">
+    <div
+      className="modal-backdrop fixed inset-0 z-[9999] flex items-center justify-center overflow-y-auto p-4 backdrop-blur-sm"
+      role="presentation"
+    >
+      <div
+        ref={panelRef}
+        className="modal-dialog relative flex max-h-[92vh] w-full max-w-[520px] flex-col overflow-hidden outline-none"
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-modal-title"
+      >
         <header className="modal-header flex h-14 shrink-0 items-center justify-between px-5">
-          <h2 className="text-primary text-[16px] font-semibold tracking-tight">Settings</h2>
+          <h2 id="settings-modal-title" className="text-primary text-[16px] font-semibold tracking-tight">
+            Settings
+          </h2>
           <button
             type="button"
             className="text-meta rounded-lg px-2 text-2xl leading-none hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text-primary)]"
-            onClick={() => dialogRef.current?.close()}
+            onClick={onClose}
             aria-label="Close settings"
           >
             ×
@@ -504,15 +507,15 @@ function SettingsModal({
         </div>
 
         <footer className="modal-footer flex shrink-0 justify-end gap-3 px-5 py-4">
-          <button type="button" className="settings-footer-button btn-secondary-solid" onClick={() => dialogRef.current?.close()}>
+          <button type="button" className="settings-footer-button btn-secondary-solid" onClick={onClose}>
             退出
           </button>
-          <button type="button" className="settings-footer-button btn-accent-solid" onClick={() => dialogRef.current?.close()}>
+          <button type="button" className="settings-footer-button btn-accent-solid" onClick={onClose}>
             保存并应用
           </button>
         </footer>
       </div>
-    </dialog>
+    </div>
   )
 }
 

@@ -35,8 +35,8 @@ function createWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 1024,
     height: 704,
-    minWidth: 960,
-    minHeight: 640,
+    minWidth: 840,
+    minHeight: 560,
     title: 'Bilingual Subtitle Aligner',
     backgroundColor: '#111827',
     autoHideMenuBar: true,

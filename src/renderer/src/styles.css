@@ -40,6 +40,7 @@
   html,
   body,
   #root {
+    height: 100%;
     min-height: 100%;
     margin: 0;
   }
@@ -741,6 +742,7 @@
 
   .timeline-range {
     width: 100%;
+    min-width: 0;
     accent-color: var(--color-accent);
   }
 
@@ -818,25 +820,6 @@
 
   .modal-backdrop {
     background: rgba(15, 23, 42, 0.78);
-  }
-
-  .settings-dialog {
-    margin: auto;
-    width: min(520px, calc(100vw - 2rem));
-    max-width: 520px;
-    max-height: 92vh;
-    padding: 0;
-    border: 1px solid var(--color-border);
-    border-radius: 16px;
-    background: var(--color-bg-panel);
-    color: var(--color-text-primary);
-    box-shadow: var(--shadow-lift);
-    overflow: hidden;
-  }
-
-  .settings-dialog::backdrop {
-    background: rgba(15, 23, 42, 0.78);
-    backdrop-filter: blur(4px);
   }
 
   .modal-dialog {
