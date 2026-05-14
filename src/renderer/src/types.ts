@@ -1,15 +1,22 @@
-export type SubtitleStatus = 'confirmed' | 'lowConfidence' | 'manuallyEdited' | 'unmatched'
+export type SubtitleStatus = 'confirmed' | 'low_confidence' | 'manual' | 'unmatched'
+
+export interface CandidateMatch {
+  id: string
+  text: string
+  confidence: number
+}
 
 export interface SubtitleLine {
-  id: string
-  index: number
-  startMs: number
-  endMs: number
-  zh: string
-  en: string
+  id: number
+  start: number
+  end: number
+  chinese: string
+  english: string
   confidence: number
   status: SubtitleStatus
-  candidates: string[]
+  candidates: CandidateMatch[]
+  problems: string[]
+  manuallyEdited: boolean
 }
 
 export interface SettingsState {

@@ -2,7 +2,7 @@
 
 基于 Electron、React、TypeScript 与 Tailwind CSS 的**中英双语字幕对齐**桌面应用。
 
-当前处于 **Phase 1：UI 骨架** 阶段，重点为桌面壳层、mock 字幕工作流与交互视觉模型。
+当前处于 **Functional Skeleton Phase（功能骨架阶段）**：在已有 UI 骨架之上，已建立**统一的字幕数据模型**与 **Zustand 全局字幕状态**，全界面围绕同一份 subtitle state 运转；仍为 **mock 数据**，无真实 API / 解析器。
 
 ## 产品定位
 
@@ -15,45 +15,53 @@
 3. 后续阶段由 AI 完成英文切句与中英对齐。
 4. 在界面中预览、人工修正，并最终导出**双语 `.srt`**。
 
-**不包含**：真实视频播放、ffmpeg、波形/多轨时间轴编辑。底部区域仅为 **字幕时间轴模拟器**，当前由 mock 数据驱动。
+**不包含**：真实视频播放、ffmpeg、波形/多轨时间轴编辑。底部区域仍为 **字幕时间轴模拟器**，由当前时间与字幕行的 `start` / `end` 驱动高亮与预览文案。
 
-## 当前实现（Phase 1）
+## 当前实现
 
-已实现：
+### UI 与桌面体验（Phase 1 延续）
 
-- Electron 桌面壳
-- React + TypeScript 渲染进程
-- Tailwind CSS 样式
-- 现代深色桌面 UI
-- Mock 字幕数据
-- 字幕导航列表（可选中）
-- 中文 / 英文大文本编辑区
-- 可点击的 AI 候选匹配卡片
-- 本地编辑状态
-- 设置弹窗 UI
-- Mock 对齐状态侧栏
-- 字幕时间轴模拟器（播放 / 暂停 / 拖动）
-- 深色预览区（居中叠字示意，无真实解码）
+- Electron 桌面壳；`electron-vite` + React + TypeScript + Tailwind
+- 主工作台布局：字幕列表、编辑区、对齐监控、底部时间轴、Problems 区域
+- **浅色 / 深色主题**（`theme.css` + `data-theme`，设置内可切换并持久化）
+- **设置**与 **开始 AI 对齐** 工作流弹窗：`createPortal` 至 `document.body`，桌面式内边距与区块密度（非居中阅读型布局）
+- 设置项：API 密钥区、AI 对齐参数、导出选项、外观；对齐工作流弹窗为独立配置草案（仍为 mock 流程）
 
-尚未实现：
+### 字幕状态架构（Functional Skeleton）
 
-- 真实 `.srt` 解析
-- 真实 `.txt` 导入
-- DeepSeek API 接入
-- AI 英文切句
-- 语义对齐算法
-- 双语 `.srt` 导出
-- 真实媒体播放
-- ffmpeg
+- **类型系统**（`src/renderer/src/types.ts`）  
+  - `SubtitleStatus`：`confirmed` | `low_confidence` | `manual` | `unmatched`  
+  - `CandidateMatch`：`id`、`text`、`confidence`  
+  - `SubtitleLine`：`id`（`number`）、`start` / `end`（毫秒）、`chinese` / `english`、`confidence`、`status`、`candidates[]`、`problems[]`、`manuallyEdited`
+- **全局 Store**（`src/renderer/src/store/subtitleStore.ts`，**Zustand**）  
+  - `subtitles`、`currentSubtitleId`  
+  - `selectSubtitle`、`setSubtitles`、`updateSubtitle`  
+  - `updateConfidence`、`updateStatus`、`replaceEnglish`  
+  - `addProblem`、`removeProblem`  
+  - 辅助：`selectCurrentSubtitle(state)` 解析当前行
+- **Mock 数据**（`src/renderer/src/mocks/subtitles.ts`）  
+  - 导出 `initialSubtitleLines`：**默认为空数组**（无本地示例字幕）；导入/解析接入后通过 `setSubtitles` 写入 store。
+- **与 UI 的接线**（`App.tsx`）  
+  - 导航列表、编辑区、候选卡片、时间轴预览文案、Problems 列表均从 **同一 store** 读取/更新，避免字幕相关的 props drilling  
+  - 播放时间、对齐会话、设置等仍可在本文件内用本地 state（后续可再抽离）
+
+### 尚未实现
+
+- 真实 `.srt` / `.txt` 导入与解析
+- DeepSeek 或其它模型 API
+- AI 英文切句与语义对齐算法
+- 双语 `.srt` 导出实现
+- 真实媒体解码与 ffmpeg
 
 ## 技术栈
 
-- Electron
-- electron-vite
-- React
-- TypeScript
-- Tailwind CSS
-- Vite
+- Electron  
+- electron-vite  
+- React  
+- TypeScript  
+- Tailwind CSS  
+- Vite  
+- **Zustand**（字幕全局状态）
 
 ## 目录结构
 
@@ -70,7 +78,10 @@
 │           ├── App.tsx
 │           ├── main.tsx
 │           ├── styles.css
+│           ├── theme.css
 │           ├── types.ts
+│           ├── store
+│           │   └── subtitleStore.ts
 │           └── mocks
 │               └── subtitles.ts
 ├── electron.vite.config.ts
@@ -108,7 +119,7 @@ npm run preview
 
 ## 安全说明
 
-Phase 1 **故意不实现** DeepSeek 或任何联网对齐逻辑。
+当前阶段 **不实现** DeepSeek 或任何联网对齐逻辑。
 
 后续接入 API 时建议：
 
@@ -124,42 +135,38 @@ Phase 1 **故意不实现** DeepSeek 或任何联网对齐逻辑。
 
 ## 阶段路线图
 
-### Phase 1：UI 骨架（当前）
+### Phase 1：UI 骨架（已完成）
 
-- 按设计稿搭建主界面与设置界面
-- 使用 mock 数据
-- 支持选中、编辑、候选项点击、设置弹窗、时间轴模拟器
+- 主界面、设置 / 对齐弹窗、mock 交互与时间轴模拟器
 
-### Phase 2：字幕数据逻辑（规划）
+### Functional Skeleton：字幕状态（进行中 / 基线已建立）
 
-- SRT 解析 / 导出
-- 字幕状态模型
-- 基于真实时间码的时间轴模拟
+- 统一 `SubtitleLine` / `CandidateMatch` / `SubtitleStatus` 类型  
+- Zustand `subtitleStore` 作为字幕 **Single Source of Truth**  
+- `initialSubtitleLines` 默认为空；导入后由 `setSubtitles` 填充
+- Navigator、Editor、Candidates、Timeline 预览、Problems 与 store 对齐
+
+### Phase 2：文件与导出（规划）
+
+- SRT / 文稿解析与写入磁盘
+- 时间轴与播放头与真实文件时间码对齐
 - 双语 SRT 导出
 
 ### Phase 3：DeepSeek 接入（规划）
 
-- 英文切句
-- 中英语义匹配
-- 批量对齐
-- 置信度与低置信标记
+- 英文切句、语义匹配、批量对齐、置信度与低置信策略
 
 ### Phase 4：质检系统（规划）
 
-- CPS
-- 行数检测
-- 字幕过长检测
-- Problems 面板跳转
+- CPS、行数、过长行等规则与 Problems 面板深度联动
 
 ## 界面方向
 
-当前 UI 为紧凑、可读的**现代深色桌面**风格，参考 VS Code、Obsidian、Discord 等信息密度与层级习惯：
+紧凑、可读的**桌面工具**风格（参考 VS Code、Cursor、Figma Desktop 等信息密度）：
 
-- 分区清晰、留白与圆角一致
-- 当前字幕内容视觉权重最高
-- 元数据与 Problems 为次要信息
-- 状态以徽章呈现
-- 候选为可点卡片
-- 预览区为纯黑底示意（非视频）
+- 分区与卡片层级清晰；弹窗内边距与内容区宽度面向工作台而非网页长表单
+- 当前字幕编辑区视觉权重最高；元数据与 Problems 为次要信息
+- 状态以徽章呈现；候选为可点卡片
+- 预览区为示意叠字（非视频解码）
 
 核心始终围绕**字幕文本对齐**，而非视频剪辑。

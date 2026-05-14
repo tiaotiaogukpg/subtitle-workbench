@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useId, useRef, useState, type JSX, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { mockSubtitles } from './mocks/subtitles'
+import { selectCurrentSubtitle, useSubtitleStore } from './store/subtitleStore'
 import type {
   AlignmentSession,
   AlignmentWorkflowDraft,
   SettingsState,
-  SubtitleLine,
   SubtitleStatus
 } from './types'
 
@@ -22,12 +21,12 @@ const statusMeta: Record<
     badgeClass: 'status-badge status-badge--confirmed',
     dotClass: 'status-dot status-dot--confirmed'
   },
-  lowConfidence: {
+  low_confidence: {
     label: 'Low Confidence',
     badgeClass: 'status-badge status-badge--low',
     dotClass: 'status-dot status-dot--low'
   },
-  manuallyEdited: {
+  manual: {
     label: 'Manually Edited',
     badgeClass: 'status-badge status-badge--edited',
     dotClass: 'status-dot status-dot--edited'
@@ -122,18 +121,18 @@ function shortText(text: string, length = 42): string {
 }
 
 function App(): JSX.Element {
-  const [subtitles, setSubtitles] = useState<SubtitleLine[]>(mockSubtitles)
-  const [selectedId, setSelectedId] = useState('sub-003')
+  const subtitles = useSubtitleStore((s) => s.subtitles)
+  const selectSubtitle = useSubtitleStore((s) => s.selectSubtitle)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [settings, setSettings] = useState<SettingsState>(() => ({
     ...defaultSettings,
     theme: readStoredTheme()
   }))
   const [isPlaying, setIsPlaying] = useState(false)
-  const [currentTimeMs, setCurrentTimeMs] = useState(7100)
+  const [currentTimeMs, setCurrentTimeMs] = useState(0)
   const [alignmentModalOpen, setAlignmentModalOpen] = useState(false)
-  const [alignmentSession, setAlignmentSession] = useState<AlignmentSession>(() => createIdleAlignmentSession(mockSubtitles.length))
-  const durationMs = subtitles[subtitles.length - 1]?.endMs ?? 1
+  const [alignmentSession, setAlignmentSession] = useState<AlignmentSession>(() => createIdleAlignmentSession(0))
+  const durationMs = subtitles[subtitles.length - 1]?.end ?? 1
 
   useLayoutEffect(() => {
     document.documentElement.dataset.theme = settings.theme
@@ -177,8 +176,7 @@ function App(): JSX.Element {
     return () => window.clearInterval(interval)
   }, [alignmentSession.phase])
 
-  const selected = subtitles.find((subtitle) => subtitle.id === selectedId) ?? subtitles[0]
-  const activeSubtitle = subtitles.find((subtitle) => currentTimeMs >= subtitle.startMs && currentTimeMs <= subtitle.endMs)
+  const activeSubtitle = subtitles.find((subtitle) => currentTimeMs >= subtitle.start && currentTimeMs <= subtitle.end)
   const activeId = activeSubtitle?.id
 
   useEffect(() => {
@@ -195,19 +193,8 @@ function App(): JSX.Element {
   }, [durationMs, isPlaying])
 
   useEffect(() => {
-    if (activeId) setSelectedId(activeId)
-  }, [activeId])
-
-  function updateSubtitle(id: string, patch: Partial<SubtitleLine>): void {
-    setSubtitles((items) => items.map((item) => (item.id === id ? { ...item, ...patch } : item)))
-  }
-
-  function applyCandidate(candidate: string): void {
-    updateSubtitle(selected.id, {
-      en: candidate,
-      status: selected.status === 'unmatched' ? 'manuallyEdited' : selected.status
-    })
-  }
+    if (activeId != null) selectSubtitle(activeId)
+  }, [activeId, selectSubtitle])
 
   const openSettings = useCallback(() => {
     setSettingsOpen(true)
@@ -261,23 +248,9 @@ function App(): JSX.Element {
         />
 
         <section className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(8.25rem,0.27fr)_minmax(0,1fr)_minmax(7rem,0.23fr)] gap-5">
-          <SubtitleNavigator
-            activeId={activeId}
-            selectedId={selected.id}
-            subtitles={subtitles}
-            onSelect={(id) => {
-              setSelectedId(id)
-              const line = subtitles.find((item) => item.id === id)
-              if (line) setCurrentTimeMs(line.startMs)
-            }}
-          />
+          <SubtitleNavigator activeId={activeId} onSeekToSubtitle={setCurrentTimeMs} />
 
-          <AlignmentWorkspace
-            selected={selected}
-            onCandidateClick={applyCandidate}
-            onChineseChange={(zh) => updateSubtitle(selected.id, { zh, status: 'manuallyEdited' })}
-            onEnglishChange={(en) => updateSubtitle(selected.id, { en, status: 'manuallyEdited' })}
-          />
+          <AlignmentWorkspace />
 
           <AlignmentStatus session={alignmentSession} settings={settings} />
         </section>
@@ -286,7 +259,6 @@ function App(): JSX.Element {
           currentTimeMs={currentTimeMs}
           durationMs={durationMs}
           isPlaying={isPlaying}
-          selected={selected}
           onPlayToggle={() => setIsPlaying((playing) => !playing)}
           onStop={() => {
             setIsPlaying(false)
@@ -404,15 +376,15 @@ function TopBar({
 
 function SubtitleNavigator({
   activeId,
-  selectedId,
-  subtitles,
-  onSelect
+  onSeekToSubtitle
 }: {
-  activeId?: string
-  selectedId: string
-  subtitles: SubtitleLine[]
-  onSelect: (id: string) => void
+  activeId?: number
+  onSeekToSubtitle: (ms: number) => void
 }): JSX.Element {
+  const subtitles = useSubtitleStore((s) => s.subtitles)
+  const currentSubtitleId = useSubtitleStore((s) => s.currentSubtitleId)
+  const selectSubtitle = useSubtitleStore((s) => s.selectSubtitle)
+
   return (
     <aside className="app-panel app-panel--sidebar flex min-h-0 min-w-0 flex-col">
       <div className="app-panel-header nav-panel-head px-3 py-2">
@@ -421,50 +393,80 @@ function SubtitleNavigator({
       </div>
 
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto overflow-x-hidden p-2">
-        {subtitles.map((subtitle) => {
-          const meta = statusMeta[subtitle.status]
-          const selected = subtitle.id === selectedId
-          const active = subtitle.id === activeId
+        {subtitles.length === 0 ? (
+          <div className="type-caption text-meta rounded-lg border border-dashed border-[var(--color-border-subtle)] px-3 py-8 text-center leading-relaxed">
+            暂无字幕
+            <span className="mt-1 block text-[12px] text-[var(--color-text-meta)]">导入中文 SRT 后将在此列出</span>
+          </div>
+        ) : (
+          subtitles.map((subtitle, index) => {
+            const meta = statusMeta[subtitle.status]
+            const isSelected = subtitle.id === currentSubtitleId
+            const isActive = subtitle.id === activeId
+            const displayIndex = index + 1
 
-          return (
-            <button
-              key={subtitle.id}
-              type="button"
-              className={`subtitle-list-item${selected ? ' subtitle-list-item-selected' : ''}`}
-              onClick={() => onSelect(subtitle.id)}
-            >
-              <span className={meta.dotClass} />
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center justify-between gap-2">
-                  <span className="type-nav-id tabular-nums">#{String(subtitle.index).padStart(3, '0')}</span>
-                  <span className="type-nav-time font-mono tabular-nums">{compactTime(subtitle.startMs)}</span>
+            return (
+              <button
+                key={subtitle.id}
+                type="button"
+                className={`subtitle-list-item${isSelected ? ' subtitle-list-item-selected' : ''}`}
+                onClick={() => {
+                  selectSubtitle(subtitle.id)
+                  onSeekToSubtitle(subtitle.start)
+                }}
+              >
+                <span className={meta.dotClass} />
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="type-nav-id tabular-nums">#{String(displayIndex).padStart(3, '0')}</span>
+                    <span className="type-nav-time font-mono tabular-nums">{compactTime(subtitle.start)}</span>
+                  </span>
+                  <span className="type-nav-preview mt-0.5 block truncate text-left leading-snug">
+                    {subtitle.chinese ? shortText(subtitle.chinese, 34) : '需要匹配'}
+                  </span>
+                  <span className={`${meta.badgeClass} nav-badge-offset`}>{meta.label}</span>
                 </span>
-                <span className="type-nav-preview mt-0.5 block truncate text-left leading-snug">
-                  {subtitle.zh ? shortText(subtitle.zh, 34) : '需要匹配'}
-                </span>
-                <span className={`${meta.badgeClass} nav-badge-offset`}>{meta.label}</span>
-              </span>
-              {active && <span className="subtitle-list-item-active-dot absolute right-2 top-2 h-1.5 w-1.5 rounded-full" />}
-            </button>
-          )
-        })}
+                {isActive && <span className="subtitle-list-item-active-dot absolute right-2 top-2 h-1.5 w-1.5 rounded-full" />}
+              </button>
+            )
+          })
+        )}
       </div>
     </aside>
   )
 }
 
-function AlignmentWorkspace({
-  selected,
-  onCandidateClick,
-  onChineseChange,
-  onEnglishChange
-}: {
-  selected: SubtitleLine
-  onCandidateClick: (candidate: string) => void
-  onChineseChange: (value: string) => void
-  onEnglishChange: (value: string) => void
-}): JSX.Element {
-  const meta = statusMeta[selected.status]
+function AlignmentWorkspace(): JSX.Element {
+  const selected = useSubtitleStore((s) => selectCurrentSubtitle(s))
+  const updateSubtitle = useSubtitleStore((s) => s.updateSubtitle)
+  const replaceEnglish = useSubtitleStore((s) => s.replaceEnglish)
+  const updateConfidence = useSubtitleStore((s) => s.updateConfidence)
+
+  if (!selected) {
+    return (
+      <section className="app-panel app-panel--primary flex min-h-0 min-w-0 flex-col overflow-hidden">
+        <div className="app-panel-header workspace-head shrink-0 px-4 py-3">
+          <p className="type-field-label">当前字幕</p>
+          <h1 className="type-workspace-id mt-1 text-[var(--color-text-meta)]">—</h1>
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
+          <p className="text-primary text-[15px] font-semibold">暂无字幕</p>
+          <p className="type-caption max-w-sm text-secondary leading-relaxed">
+            当前项目没有字幕行。请使用工具栏「导入中文 SRT」载入时间轴与文本（功能接入后生效）。
+          </p>
+        </div>
+      </section>
+    )
+  }
+
+  const line = selected
+  const meta = statusMeta[line.status]
+
+  function applyCandidate(candidateText: string): void {
+    const match = line.candidates.find((c) => c.text === candidateText)
+    replaceEnglish(line.id, candidateText)
+    if (match) updateConfidence(line.id, match.confidence)
+  }
 
   return (
     <section className="app-panel app-panel--primary flex min-h-0 min-w-0 flex-col overflow-hidden">
@@ -472,9 +474,9 @@ function AlignmentWorkspace({
         <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
           <div>
             <p className="type-field-label">Current Subtitle</p>
-            <h1 className="type-workspace-id mt-1">#{String(selected.index).padStart(3, '0')}</h1>
+            <h1 className="type-workspace-id mt-1">#{String(line.id).padStart(3, '0')}</h1>
             <p className="type-workspace-time mt-1 font-mono tabular-nums">
-              {formatTime(selected.startMs)} → {formatTime(selected.endMs)}
+              {formatTime(line.start)} → {formatTime(line.end)}
             </p>
           </div>
           <span className={meta.badgeClass}>{meta.label}</span>
@@ -486,8 +488,14 @@ function AlignmentWorkspace({
           <span className="type-field-label mb-1.5 block">Chinese Subtitle</span>
           <textarea
             className="subtitle-editor subtitle-editor--dense"
-            value={selected.zh}
-            onChange={(event) => onChineseChange(event.currentTarget.value)}
+            value={line.chinese}
+            onChange={(event) =>
+              updateSubtitle(line.id, {
+                chinese: event.currentTarget.value,
+                manuallyEdited: true,
+                status: 'manual'
+              })
+            }
           />
         </label>
 
@@ -495,8 +503,14 @@ function AlignmentWorkspace({
           <span className="type-field-label mb-1.5 block">English Subtitle</span>
           <textarea
             className="subtitle-editor subtitle-editor--dense"
-            value={selected.en}
-            onChange={(event) => onEnglishChange(event.currentTarget.value)}
+            value={line.english}
+            onChange={(event) =>
+              updateSubtitle(line.id, {
+                english: event.currentTarget.value,
+                manuallyEdited: true,
+                status: 'manual'
+              })
+            }
           />
         </label>
 
@@ -504,27 +518,26 @@ function AlignmentWorkspace({
           <div className="candidate-well__head mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
             <div>
               <h2 className="type-panel-title">AI Candidate Matches</h2>
-              <p className="type-caption mt-0.5">Line confidence {selected.confidence}%</p>
+              <p className="type-caption mt-0.5">Line confidence {line.confidence}%</p>
             </div>
             <div className="confidence-track confidence-track--compact w-24">
-              <div className="confidence-fill" style={{ width: `${selected.confidence}%` }} />
+              <div className="confidence-fill" style={{ width: `${line.confidence}%` }} />
             </div>
           </div>
 
           <div className="candidate-stack">
-            {selected.candidates.map((candidate, index) => {
-              const confidence = [72, 58, 31][index] ?? Math.max(20, selected.confidence - index * 12)
-              const isActive = candidate === selected.en
+            {line.candidates.map((candidate) => {
+              const isActive = candidate.text === line.english
 
               return (
                 <button
-                  key={candidate}
+                  key={candidate.id}
                   type="button"
                   className={`candidate-card${isActive ? ' candidate-card--selected' : ''}`}
-                  onClick={() => onCandidateClick(candidate)}
+                  onClick={() => applyCandidate(candidate.text)}
                 >
-                  <span className="candidate-score">{confidence}%</span>
-                  <span className="type-candidate-text min-w-0 flex-1 text-left">{candidate}</span>
+                  <span className="candidate-score">{candidate.confidence}%</span>
+                  <span className="type-candidate-text min-w-0 flex-1 text-left">{candidate.text}</span>
                 </button>
               )
             })}
@@ -610,7 +623,6 @@ function TimelineSimulator({
   currentTimeMs,
   durationMs,
   isPlaying,
-  selected,
   onPlayToggle,
   onStop,
   onSeek
@@ -618,11 +630,11 @@ function TimelineSimulator({
   currentTimeMs: number
   durationMs: number
   isPlaying: boolean
-  selected: SubtitleLine
   onPlayToggle: () => void
   onStop: () => void
   onSeek: (value: number) => void
 }): JSX.Element {
+  const selected = useSubtitleStore((s) => selectCurrentSubtitle(s))
   return (
     <section className="timeline-dock grid min-h-0 min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_minmax(8.5rem,0.4fr)] gap-5">
       <div className="grid min-h-0 min-w-0 grid-cols-[minmax(5.5rem,6.75rem)_minmax(0,1fr)] items-stretch gap-5">
@@ -678,8 +690,17 @@ function TimelineSimulator({
 
           <div className="playback-preview">
             <div className="max-w-3xl">
-              <p className="playback-preview-zh">{selected.zh}</p>
-              <p className="playback-preview-en">{selected.en}</p>
+              {selected ? (
+                <>
+                  <p className="playback-preview-zh">{selected.chinese || '（无中文）'}</p>
+                  <p className="playback-preview-en">{selected.english || '（无英文）'}</p>
+                </>
+              ) : (
+                <>
+                  <p className="playback-preview-zh text-[var(--color-text-meta)]">暂无字幕可预览</p>
+                  <p className="playback-preview-en text-[var(--color-text-meta)]">导入字幕后将显示当前行</p>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -688,9 +709,13 @@ function TimelineSimulator({
       <aside className="problems-panel min-w-0">
         <h3 className="ui-section-title">Problems</h3>
         <div className="mt-2 space-y-2">
-          <ProblemItem label="Subtitle too long" />
-          <ProblemItem label="Low confidence match" />
-          <ProblemItem label="Reading speed too high" />
+          {!selected ? (
+            <p className="type-caption text-meta px-1 leading-relaxed">无选中字幕行；导入字幕后再查看本行问题。</p>
+          ) : selected.problems.length === 0 ? (
+            <p className="type-caption text-meta px-1">本行无问题</p>
+          ) : (
+            selected.problems.map((problem) => <ProblemItem key={problem} label={problem} />)
+          )}
         </div>
       </aside>
     </section>
