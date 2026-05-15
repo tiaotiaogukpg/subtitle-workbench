@@ -1,4 +1,5 @@
 import type { ScriptSegment, SubtitleLine, SubtitleStatus } from '../types'
+import { hasChineseChars, isPureEnglishSegment } from './englishCandidateFilter'
 
 export const REAL_ALIGN_SUBTITLE_COUNT = 5
 export const REAL_ALIGN_SEGMENT_WINDOW = 32
@@ -22,6 +23,13 @@ export interface DeepSeekAlignmentMatchRow {
   english: string
   confidence: number
   reason: string
+}
+
+export type DeepSeekMatchValidationFlag = 'invalid_candidate' | 'invalid_segment_id'
+
+export interface DeepSeekAlignmentMatchValidated extends DeepSeekAlignmentMatchRow {
+  validationFlags: DeepSeekMatchValidationFlag[]
+  applyable: boolean
 }
 
 export interface DeepSeekAlignmentResponseShape {
@@ -48,15 +56,20 @@ export function pickAlignmentSubtitleBatch(
   return out
 }
 
-/** 取英文/混合片段，按原稿顺序；窗口大小 REAL_ALIGN_SEGMENT_WINDOW，位置与当前字幕批次起点成比例对齐。 */
+/** 仅 `language === "english"` 且 `isPureEnglishSegment(text)` 的片段进入 DeepSeek 候选（顺序保持与 Script Pool 一致）。 */
+export function listDeepSeekEnglishOnlySegments(segments: ScriptSegment[]): ScriptSegment[] {
+  return segments.filter(
+    (s) => s.language === 'english' && s.text.trim().length > 0 && isPureEnglishSegment(s.text)
+  )
+}
+
+/** 在纯英文候选中取窗口；与字幕批次位置成比例对齐。 */
 export function pickNearbyScriptSegments(
   segments: ScriptSegment[],
   subtitleBatchStartIndex: number,
   totalSubtitleLines: number
 ): ScriptSegment[] {
-  const pool = segments.filter(
-    (s) => (s.language === 'english' || s.language === 'mixed') && s.text.trim().length > 0
-  )
+  const pool = listDeepSeekEnglishOnlySegments(segments)
   if (pool.length === 0) return []
   const take = Math.min(REAL_ALIGN_SEGMENT_WINDOW, pool.length)
   const denom = Math.max(1, totalSubtitleLines - 1)
@@ -80,17 +93,22 @@ Rules:
 7. confidence is a number between 0 and 1.
 8. reason is a short English explanation.
 
+English-only constraints (mandatory):
+- Only use candidate segments from the provided English candidates list. Do not invent segment ids.
+- Do not generate or use Chinese text in the "english" field. Return English text only in the "english" field.
+- Do not match or quote mixed-language segments; the candidate list is English-only.
+
 Output: Return JSON only (no markdown, no code fences, no commentary). The JSON must parse with JSON.parse and have this exact shape:
 {"matches":[{"subtitleId":1,"matchedSegmentIds":["seg_x"],"english":"...","confidence":0.92,"reason":"..."}]}`
 
 export function buildAlignmentUserPayload(
   subtitles: AlignmentPromptSubtitle[],
-  segments: AlignmentPromptSegment[]
+  englishCandidates: AlignmentPromptSegment[]
 ): string {
   return JSON.stringify(
     {
       subtitles,
-      segments,
+      englishCandidatesOnly: englishCandidates,
       constraints: {
         maxSegmentsPerSubtitle: 6,
         segmentReuse: 'forbidden',
@@ -104,9 +122,9 @@ export function buildAlignmentUserPayload(
 
 export function buildAlignmentMessages(
   subtitles: AlignmentPromptSubtitle[],
-  segments: AlignmentPromptSegment[]
+  englishCandidates: AlignmentPromptSegment[]
 ): { messages: Array<{ role: 'system' | 'user'; content: string }>; promptCharCount: number } {
-  const userContent = `${buildAlignmentUserPayload(subtitles, segments)}
+  const userContent = `${buildAlignmentUserPayload(subtitles, englishCandidates)}
 
 Return JSON only.`
   const messages: Array<{ role: 'system' | 'user'; content: string }> = [
@@ -201,6 +219,36 @@ export function parseAlignmentModelJson(raw: string): { ok: true; data: DeepSeek
     matches.push(row)
   }
   return { ok: true, data: { matches } }
+}
+
+export function validateDeepSeekAlignmentRows(
+  matches: DeepSeekAlignmentMatchRow[],
+  allowedSegmentIds: Set<string>
+): DeepSeekAlignmentMatchValidated[] {
+  return matches.map((m) => {
+    const flags: DeepSeekMatchValidationFlag[] = []
+    if (hasChineseChars(m.english)) flags.push('invalid_candidate')
+    if (
+      m.matchedSegmentIds.length === 0 ||
+      m.matchedSegmentIds.some((id) => !allowedSegmentIds.has(id))
+    ) {
+      flags.push('invalid_segment_id')
+    }
+    return { ...m, validationFlags: flags, applyable: flags.length === 0 }
+  })
+}
+
+export function buildAlignmentValidationWarnings(validated: DeepSeekAlignmentMatchValidated[]): string[] {
+  const w: string[] = []
+  validated.forEach((m, i) => {
+    if (m.validationFlags.includes('invalid_candidate')) {
+      w.push(`matches[${i}] #${m.subtitleId}: invalid_candidate (english contains CJK)`)
+    }
+    if (m.validationFlags.includes('invalid_segment_id')) {
+      w.push(`matches[${i}] #${m.subtitleId}: invalid_segment_id (ids not in English candidate pool or empty)`)
+    }
+  })
+  return w
 }
 
 export { confidenceToPercent, statusFromConfidencePct }

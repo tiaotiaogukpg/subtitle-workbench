@@ -1,4 +1,5 @@
 import { useMemo, type JSX } from 'react'
+import { hasChineseChars, isPureEnglishSegment } from '../lib/englishCandidateFilter'
 import type { ScriptPoolListFilter, ScriptSegmentLanguage } from '../types'
 import { filterScriptSegmentsForList, useScriptPoolStore } from '../store/scriptPoolStore'
 
@@ -108,6 +109,16 @@ export function EnglishScriptPoolPanel(): JSX.Element {
                   <span className="type-nav-id tabular-nums">#{String(displayIndex).padStart(3, '0')}</span>
                   <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
                     <span className={languageBadgeClass(seg.language)}>{languageBadgeLabel(seg.language)}</span>
+                    {hasChineseChars(seg.text) && seg.language === 'english' ? (
+                      <span className="script-pool-context-tag" title="含中文：不进入 DeepSeek 英文候选池">
+                        MIX
+                      </span>
+                    ) : null}
+                    {seg.language === 'english' && !hasChineseChars(seg.text) && !isPureEnglishSegment(seg.text) ? (
+                      <span className="script-pool-context-tag" title="非纯英文：不进入 DeepSeek 英文候选池">
+                        Context
+                      </span>
+                    ) : null}
                     {seg.language === 'chinese' || seg.language === 'mixed' ? (
                       <span className="script-pool-context-tag" title="Context only — fake AI alignment does not use this line">
                         上下文
