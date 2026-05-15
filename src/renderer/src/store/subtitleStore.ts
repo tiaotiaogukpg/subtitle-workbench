@@ -1,5 +1,9 @@
 import { create } from 'zustand'
-import { confidenceToPercent, statusFromConfidencePct, type DeepSeekAlignmentMatchRow } from '../lib/realAlignmentBatch'
+import {
+  confidenceToPercent,
+  statusFromConfidencePct,
+  type AlignmentMatchRow
+} from '../lib/alignment'
 import { initialSubtitleLines } from '../mocks/subtitles'
 import type { CandidateMatch, SubtitleLine, SubtitleStatus } from '../types'
 import { useScriptPoolStore } from './scriptPoolStore'
@@ -19,7 +23,7 @@ export interface SubtitleStoreActions {
   addProblem: (id: number, problem: string) => void
   removeProblem: (id: number, problem: string) => void
   /** 将预览中的 AI 对齐结果写入字幕（含 candidates）；不修改未出现在 rows 中的行。 */
-  applyDeepSeekPreviewMatches: (rows: DeepSeekAlignmentMatchRow[]) => void
+  applyDeepSeekPreviewMatches: (rows: AlignmentMatchRow[]) => void
 }
 
 export type SubtitleStore = SubtitleStoreState & SubtitleStoreActions
@@ -89,10 +93,10 @@ export const useSubtitleStore = create<SubtitleStore>((set, get) => ({
   applyDeepSeekPreviewMatches: (rows) => {
     if (rows.length === 0) return
     const validSeg = new Set(useScriptPoolStore.getState().segments.map((seg) => seg.id))
-    const grouped = new Map<number, DeepSeekAlignmentMatchRow[]>()
+    const grouped = new Map<number, AlignmentMatchRow[]>()
     for (const r of rows) {
       const filteredIds = r.matchedSegmentIds.filter((id) => validSeg.has(id))
-      const row: DeepSeekAlignmentMatchRow = {
+      const row: AlignmentMatchRow = {
         ...r,
         matchedSegmentIds: filteredIds,
         english: r.english.trim()
@@ -112,7 +116,8 @@ export const useSubtitleStore = create<SubtitleStore>((set, get) => ({
           id: crypto.randomUUID(),
           segmentIds: [...m.matchedSegmentIds],
           text: m.english.trim(),
-          confidence: confidenceToPercent(m.confidence)
+          confidence: confidenceToPercent(m.confidence),
+          groupId: m.groupId
         }))
         const topPct = candidates[0]?.confidence ?? confidenceToPercent(primary.confidence)
         const status: SubtitleStatus = statusFromConfidencePct(topPct)

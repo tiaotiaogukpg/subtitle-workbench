@@ -7,6 +7,19 @@ export interface CandidateMatch {
   /** `segmentIds` 对应片段文本以空格合并后的展示串。 */
   text: string
   confidence: number
+  /** 对齐候选组 id（DeepSeek group 匹配）。 */
+  groupId?: string
+}
+
+/** 连续纯英文 Script Pool 片段组成的 DeepSeek 候选组。 */
+export interface CandidateSegmentGroup {
+  id: string
+  segmentIds: string[]
+  text: string
+  startSegmentIndex: number
+  endSegmentIndex: number
+  wordCount: number
+  charCount: number
 }
 
 export interface SubtitleLine {
@@ -55,29 +68,12 @@ export interface SettingsState {
   fontSize: number
 }
 
-export type AlignmentSessionPhase = 'idle' | 'aligning' | 'complete'
+export type AiAlignmentMode = 'batch_test' | 'full_file'
 
-export type AlignmentWorkflowMode = 'sequential' | 'semanticHybrid'
-
-export type SemanticMatchStrength = 'low' | 'medium' | 'high'
-
-export interface AlignmentSession {
-  phase: AlignmentSessionPhase
-  progressPct: number
-  batchIndex: number
-  batchTotal: number
-  matched: number
-  total: number
-  batchSize: number
-  /** 当前正在「模拟处理」的字幕 id；非对齐阶段为 null。 */
-  processingSubtitleId: number | null
-}
-
-export interface AlignmentWorkflowDraft {
+/** AI Alignment 工作流中的运行参数（仅真实 DeepSeek）。 */
+export interface AiAlignmentRunConfig {
   model: string
   batchSize: number
   confidenceThreshold: number
-  mode: AlignmentWorkflowMode
-  semanticStrength: SemanticMatchStrength
-  retryFailed: boolean
+  mode: AiAlignmentMode
 }

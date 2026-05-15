@@ -109,7 +109,7 @@ export function EnglishScriptPoolPanel(): JSX.Element {
                   <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
                     <span className={languageBadgeClass(seg.language)}>{languageBadgeLabel(seg.language)}</span>
                     {seg.language === 'chinese' || seg.language === 'mixed' ? (
-                      <span className="script-pool-context-tag" title="Context only — fake AI alignment does not use this line">
+                      <span className="script-pool-context-tag" title="仅作上下文，不进入 DeepSeek 英文候选池">
                         上下文
                       </span>
                     ) : null}

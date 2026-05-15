@@ -2,20 +2,19 @@ import { useCallback, useEffect, useLayoutEffect, useId, useRef, useState, type 
 import { createPortal } from 'react-dom'
 import { downloadBilingualSrt } from './lib/srtExporter'
 import { parseSrt } from './lib/srtParser'
-import { simulateAlignment } from './lib/fakeAlignmentEngine'
 import { parseMixedTranscript } from './lib/mixedTranscriptParser'
 import { EnglishScriptPoolPanel } from './components/EnglishScriptPoolPanel'
-import { RealAlignmentSandbox } from './components/RealAlignmentSandbox'
+import { AiAlignmentWorkflowModal } from './components/AiAlignmentWorkflowModal'
 import { VerticalStackSplitter } from './components/VerticalStackSplitter'
 import { useHistoryStore } from './store/historyStore'
 import { useScriptPoolStore } from './store/scriptPoolStore'
+import { startAlignmentSession } from './lib/alignment'
+import {
+  isAlignmentSessionActive,
+  useAlignmentSessionStore
+} from './store/alignmentSessionStore'
 import { selectCurrentSubtitle, useSubtitleStore } from './store/subtitleStore'
-import type {
-  AlignmentSession,
-  AlignmentWorkflowDraft,
-  SettingsState,
-  SubtitleStatus
-} from './types'
+import type { SettingsState, SubtitleStatus } from './types'
 import { DEFAULT_USER_SETTINGS } from '../../shared/settingsDefaults'
 
 const statusMeta: Record<
@@ -73,35 +72,6 @@ function readStoredTheme(): 'light' | 'dark' {
 
 const defaultSettings: SettingsState = { ...DEFAULT_USER_SETTINGS }
 
-function createIdleAlignmentSession(total: number): AlignmentSession {
-  return {
-    phase: 'idle',
-    progressPct: 0,
-    batchIndex: 0,
-    batchTotal: 0,
-    matched: 0,
-    total,
-    batchSize: defaultSettings.batchSize,
-    processingSubtitleId: null
-  }
-}
-
-function alignmentStateLabel(phase: AlignmentSession['phase']): string {
-  if (phase === 'idle') return '就绪'
-  if (phase === 'aligning') return '对齐中'
-  return '已完成'
-}
-
-function subtitlesInCurrentBatch(session: AlignmentSession): number {
-  if (session.phase === 'idle' || session.batchTotal === 0 || session.batchIndex < 1) return 0
-  return Math.min(session.batchSize, session.total - (session.batchIndex - 1) * session.batchSize)
-}
-
-function estimateApiUsageTokens(draft: AlignmentWorkflowDraft, subtitleCount: number): number {
-  const batches = Math.max(1, Math.ceil(subtitleCount / draft.batchSize))
-  return Math.round(batches * draft.batchSize * 220)
-}
-
 function formatTime(ms: number): string {
   const minutes = Math.floor(ms / 60000)
   const seconds = Math.floor((ms % 60000) / 1000)
@@ -145,24 +115,13 @@ function App(): JSX.Element {
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTimeMs, setCurrentTimeMs] = useState(0)
   const [alignmentModalOpen, setAlignmentModalOpen] = useState(false)
-  const [alignmentSession, setAlignmentSession] = useState<AlignmentSession>(() => createIdleAlignmentSession(0))
-  const alignmentRunRef = useRef<{ cancel: () => void } | null>(null)
+  const sessionStatus = useAlignmentSessionStore((s) => s.status)
+  const alignmentBusy = isAlignmentSessionActive(sessionStatus)
   const durationMs = subtitles[subtitles.length - 1]?.end ?? 1
 
   useLayoutEffect(() => {
     document.documentElement.dataset.theme = settings.theme
   }, [settings.theme])
-
-  useEffect(() => {
-    setAlignmentSession((prev) => (prev.phase === 'idle' ? { ...prev, total: subtitles.length } : prev))
-  }, [subtitles.length])
-
-  useEffect(() => {
-    return () => {
-      alignmentRunRef.current?.cancel()
-      alignmentRunRef.current = null
-    }
-  }, [])
 
   useEffect(() => {
     const bridge = window.bilingualSubtitleAligner
@@ -197,7 +156,6 @@ function App(): JSX.Element {
   }, [activeId, selectSubtitle])
 
   useEffect(() => {
-    if (alignmentSession.phase === 'aligning') return
     const onKeyDown = (event: KeyboardEvent): void => {
       const el = event.target
       if (
@@ -219,7 +177,7 @@ function App(): JSX.Element {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [alignmentSession.phase])
+  }, [])
 
   const openSettings = useCallback(() => {
     setSettingsOpen(true)
@@ -285,39 +243,11 @@ function App(): JSX.Element {
     setAlignmentModalOpen(false)
   }, [])
 
-  const runAlignmentFromWorkflow = useCallback((draft: AlignmentWorkflowDraft) => {
-    alignmentRunRef.current?.cancel()
-    setSettings((s) => ({
-      ...s,
-      model: draft.model,
-      batchSize: draft.batchSize,
-      confidenceThreshold: draft.confidenceThreshold
-    }))
-    const total = subtitles.length
-    const batchTotal = Math.max(1, Math.ceil(total / Math.max(1, draft.batchSize)))
-    setAlignmentSession({
-      phase: 'aligning',
-      progressPct: 0,
-      batchIndex: 1,
-      batchTotal,
-      matched: 0,
-      total,
-      batchSize: draft.batchSize,
-      processingSubtitleId: null
-    })
-    setAlignmentModalOpen(false)
-    alignmentRunRef.current = simulateAlignment({ draft, setAlignmentSession })
-  }, [subtitles.length])
-
   return (
     <>
       <main className="app-root app-workbench relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden font-sans text-[13px] leading-normal antialiased">
         <TopBar
-          alignmentBatchIndex={alignmentSession.batchIndex}
-          alignmentBatchTotal={alignmentSession.batchTotal}
-          alignmentMatched={alignmentSession.matched}
-          alignmentPhase={alignmentSession.phase}
-          alignmentTotal={alignmentSession.total}
+          alignmentBusy={alignmentBusy}
           chineseSrtInputRef={chineseSrtInputRef}
           englishTxtInputRef={englishTxtInputRef}
           settingsOpen={settingsOpen}
@@ -335,7 +265,7 @@ function App(): JSX.Element {
 
           <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
             <VerticalStackSplitter
-              top={<AlignmentStatus session={alignmentSession} settings={settings} />}
+              top={<AlignmentStatus settings={settings} />}
               bottom={<EnglishScriptPoolPanel />}
             />
           </div>
@@ -356,11 +286,11 @@ function App(): JSX.Element {
 
       {alignmentModalOpen
         ? createPortal(
-            <AlignmentWorkflowModal
-              subtitleCount={subtitles.length}
+            <AiAlignmentWorkflowModal
               settings={settings}
               onClose={closeAlignmentModal}
-              onRun={runAlignmentFromWorkflow}
+              onCommitAlignSettings={(patch) => setSettings((s) => ({ ...s, ...patch }))}
+              onStartAlignment={(config) => startAlignmentSession(config, settings.apiKey)}
             />,
             document.body
           )
@@ -381,11 +311,7 @@ function TopBar({
   onOpenSettings,
   onOpenAlignment,
   onExportBilingualSrt,
-  alignmentPhase,
-  alignmentBatchIndex,
-  alignmentBatchTotal,
-  alignmentMatched,
-  alignmentTotal,
+  alignmentBusy,
   chineseSrtInputRef,
   englishTxtInputRef,
   onChineseSrtFileChange,
@@ -395,18 +321,12 @@ function TopBar({
   onOpenSettings: () => void
   onOpenAlignment: () => void
   onExportBilingualSrt: () => void
-  alignmentPhase: AlignmentSession['phase']
-  alignmentBatchIndex: number
-  alignmentBatchTotal: number
-  alignmentMatched: number
-  alignmentTotal: number
+  alignmentBusy: boolean
   chineseSrtInputRef: RefObject<HTMLInputElement | null>
   englishTxtInputRef: RefObject<HTMLInputElement | null>
   onChineseSrtFileChange: (event: ChangeEvent<HTMLInputElement>) => void
   onEnglishTxtFileChange: (event: ChangeEvent<HTMLInputElement>) => void
 }): JSX.Element {
-  const aligning = alignmentPhase === 'aligning'
-  const showLiveMeta = alignmentPhase === 'aligning' || alignmentPhase === 'complete'
   const canUndo = useHistoryStore((s) => s.undoStack.length > 0)
   const canRedo = useHistoryStore((s) => s.redoStack.length > 0)
   const undo = useHistoryStore((s) => s.undo)
@@ -418,10 +338,9 @@ function TopBar({
         <button
           type="button"
           className="toolbar-btn toolbar-btn--primary-action"
-          disabled={aligning}
           onClick={onOpenAlignment}
         >
-          开始 AI 对齐
+          整文件 AI 对齐
         </button>
         <span className="toolbar-sep" aria-hidden />
         <input
@@ -463,7 +382,7 @@ function TopBar({
           type="button"
           className="toolbar-btn toolbar-btn--icon"
           aria-label="撤销"
-          disabled={aligning || !canUndo}
+          disabled={!canUndo}
           onClick={() => undo()}
         >
           <span className="toolbar-btn__glyph" aria-hidden>
@@ -474,7 +393,7 @@ function TopBar({
           type="button"
           className="toolbar-btn toolbar-btn--icon"
           aria-label="重做"
-          disabled={aligning || !canRedo}
+          disabled={!canRedo}
           onClick={() => redo()}
         >
           <span className="toolbar-btn__glyph" aria-hidden>
@@ -484,21 +403,10 @@ function TopBar({
       </div>
 
       <div className="app-toolbar__meta type-toolbar-meta hidden text-right sm:block">
-        {showLiveMeta ? (
-          <>
-            <p className="text-primary font-semibold tabular-nums">
-              第 {alignmentBatchIndex} / {alignmentBatchTotal} 批
-            </p>
-            <p className="text-secondary mt-0.5 leading-tight tabular-nums">
-              已匹配 {alignmentMatched} / {alignmentTotal}
-            </p>
-          </>
-        ) : (
-          <>
-            <p className="text-primary font-semibold">AI 对齐</p>
-            <p className="text-secondary mt-0.5 leading-tight">在工具栏启动对齐即可开始</p>
-          </>
-        )}
+        <p className="text-primary font-semibold">AI 对齐</p>
+        <p className="text-secondary mt-0.5 leading-tight">
+          {alignmentBusy ? '整文件对齐运行中…' : '一键对齐整份字幕'}
+        </p>
       </div>
     </header>
   )
@@ -729,69 +637,127 @@ function AlignmentWorkspace(): JSX.Element {
   )
 }
 
-function AlignmentStatus({ settings, session }: { settings: SettingsState; session: AlignmentSession }): JSX.Element {
-  const progressPct = session.phase === 'idle' ? 0 : Math.round(session.progressPct)
-  const matchedLine = `${session.matched} / ${session.total}`
-  const inBatch = subtitlesInCurrentBatch(session)
-  const processingLine = useSubtitleStore((s) =>
-    session.processingSubtitleId != null ? (s.subtitles.find((l) => l.id === session.processingSubtitleId) ?? null) : null
-  )
+const sessionStatusLabel: Record<string, string> = {
+  idle: '空闲',
+  running: '运行中',
+  paused: '已暂停',
+  completed: '已完成',
+  failed: '失败'
+}
+
+function AlignmentStatus({ settings }: { settings: SettingsState }): JSX.Element {
+  const subtitles = useSubtitleStore((s) => s.subtitles)
+  const sessionStatus = useAlignmentSessionStore((s) => s.status)
+  const sessionMode = useAlignmentSessionStore((s) => s.mode)
+  const progressPct = useAlignmentSessionStore((s) => s.progressPct)
+  const lastSummary = useAlignmentSessionStore((s) => s.lastSummary)
+  const lastError = useAlignmentSessionStore((s) => s.lastError)
+  const currentBatchIndex = useAlignmentSessionStore((s) => s.currentBatchIndex)
+  const totalBatches = useAlignmentSessionStore((s) => s.totalBatches)
+  const currentBatchLabel = useAlignmentSessionStore((s) => s.currentBatchLabel)
+  const processedSubtitleCount = useAlignmentSessionStore((s) => s.processedSubtitleCount)
+  const totalSubtitleCount = useAlignmentSessionStore((s) => s.totalSubtitleCount)
+  const processingSubtitleId = useAlignmentSessionStore((s) => s.processingSubtitleId)
+  const englishCursor = useAlignmentSessionStore((s) => s.englishCursor)
+  const sessionMatchedCount = useAlignmentSessionStore((s) => s.sessionMatchedCount)
+  const sessionNeedsReviewCount = useAlignmentSessionStore((s) => s.sessionNeedsReviewCount)
+  const sessionFailedCount = useAlignmentSessionStore((s) => s.sessionFailedCount)
+  const finalReport = useAlignmentSessionStore((s) => s.finalReport)
+  const bridge = typeof window !== 'undefined' ? window.bilingualSubtitleAligner : undefined
+  const aiReady = Boolean(bridge?.alignDeepSeekBatch)
+
+  const matchedLines = subtitles.filter((l) => l.english.trim().length > 0).length
+  const lowConfidenceLines = subtitles.filter((l) => l.status === 'low_confidence').length
+  const needsReviewLines = subtitles.filter(
+    (l) => l.status === 'low_confidence' || l.problems.length > 0
+  ).length
+
+  const modeLabel =
+    sessionMode === 'full_file' ? '整文件自动对齐' : sessionMode === 'batch_test' ? '调试小批' : '—'
 
   return (
     <aside className="app-panel alignment-panel flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
       <div className="app-panel-header alignment-panel__head shrink-0 px-4 py-2.5">
         <h2 className="ui-section-title">对齐</h2>
-        <p className="type-caption alignment-monitor-tag mt-1">AI 会话监控</p>
+        <p className="type-caption alignment-monitor-tag mt-1">会话监控</p>
         <p className="type-caption mt-1 leading-snug">
           {settings.provider} · <span className="text-secondary">{settings.model}</span>
         </p>
       </div>
 
       <div className="alignment-panel__body min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
-        <div>
-          <div className="mb-1 flex items-baseline justify-between gap-2">
-            <span className="type-field-label">运行进度</span>
-            <span className="type-run-pct tabular-nums">{progressPct}%</span>
+        <div className="rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] p-2.5">
+          <div className="mb-2 flex items-baseline justify-between gap-2">
+            <p className="type-field-label">对齐会话</p>
+            <span className="type-caption font-semibold text-primary">
+              {sessionStatusLabel[sessionStatus] ?? sessionStatus}
+            </span>
           </div>
-          <div className="alignment-progress-track">
-            <div className="alignment-progress-fill" style={{ width: `${progressPct}%` }} />
+          <Metric label="模式" value={modeLabel} />
+          <Metric label="AI Ready" value={aiReady ? '是' : '否'} />
+          <div className="mt-2">
+            <div className="mb-1 flex items-baseline justify-between gap-2">
+              <span className="type-field-label">进度</span>
+              <span className="type-run-pct tabular-nums">{progressPct}%</span>
+            </div>
+            <div className="alignment-progress-track">
+              <div
+                className="alignment-progress-fill"
+                style={{ width: `${progressPct}%` }}
+              />
+            </div>
           </div>
+          <p className="type-caption mt-2 leading-snug text-meta">{lastSummary}</p>
+          {lastError ? (
+            <p className="type-caption mt-1 leading-snug text-red-500">{lastError}</p>
+          ) : null}
         </div>
 
-        <div>
-          <p className="type-field-label mb-1">当前批次</p>
-          <p className="type-panel-stat tabular-nums">
-            {session.phase === 'idle' || session.batchTotal === 0 ? (
-              '—'
-            ) : (
-              <>
-                {session.batchIndex} <span className="type-caption font-medium">/</span> {session.batchTotal}
-              </>
-            )}
-          </p>
-          <p className="type-caption mt-1">
-            {session.phase === 'idle' || session.batchTotal === 0
-              ? '暂无运行中的批次'
-              : `本批含 ${inBatch} 条字幕`}
-          </p>
+        <div className="metric-stack space-y-3">
+          <Metric
+            label="当前批次"
+            value={totalBatches > 0 ? `${currentBatchIndex} / ${totalBatches}` : '—'}
+          />
+          <Metric label="批次范围" value={currentBatchLabel} />
+          <Metric
+            label="已处理字幕"
+            value={`${processedSubtitleCount} / ${totalSubtitleCount || subtitles.length}`}
+          />
+          <Metric
+            label="当前处理行"
+            value={processingSubtitleId != null ? `#${processingSubtitleId}` : '—'}
+          />
+          <Metric label="English cursor" value={String(englishCursor)} />
         </div>
 
-        {session.phase === 'aligning' && processingLine ? (
-          <div className="rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] p-2.5">
-            <p className="type-field-label mb-1">正在处理</p>
-            <p className="type-panel-stat tabular-nums">#{String(processingLine.id).padStart(3, '0')}</p>
-            <p className="type-caption mt-1.5 leading-snug text-secondary">
-              {processingLine.chinese ? shortText(processingLine.chinese, 96) : '（无中文）'}
-            </p>
+        <div className="metric-stack space-y-3">
+          <p className="type-field-label">本会话统计</p>
+          <Metric label="匹配" value={String(sessionMatchedCount)} />
+          <Metric label="需复查" value={String(sessionNeedsReviewCount)} />
+          <Metric label="失败" value={String(sessionFailedCount)} />
+        </div>
+
+        {finalReport ? (
+          <div className="metric-stack space-y-3 rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] p-2.5">
+            <p className="type-field-label">整文件报告</p>
+            <Metric
+              label="已匹配"
+              value={`${finalReport.matchedSubtitleCount} / ${finalReport.totalSubtitleCount}`}
+            />
+            <Metric label="需复查" value={String(finalReport.needsReviewCount)} />
+            <Metric label="未匹配" value={String(finalReport.unmatchedCount)} />
+            <Metric label="未用英文段" value={String(finalReport.unusedEnglishSegmentIds.length)} />
+            <Metric label="重复 segment" value={String(finalReport.duplicateSegmentIds.length)} />
           </div>
         ) : null}
 
         <div className="metric-stack space-y-3">
-          <Metric label="已匹配" value={matchedLine} />
-          <Metric label="状态" value={alignmentStateLabel(session.phase)} />
+          <p className="type-field-label">字幕全局</p>
+          <Metric label="已填英文" value={`${matchedLines} / ${subtitles.length}`} />
+          <Metric label="低置信度" value={String(lowConfidenceLines)} />
+          <Metric label="待复查行" value={String(needsReviewLines)} />
         </div>
 
-        <RealAlignmentSandbox settings={settings} />
       </div>
     </aside>
   )
@@ -920,214 +886,6 @@ function TimelineSimulator({
 
 function ProblemItem({ label }: { label: string }): JSX.Element {
   return <p className="problem-item">▲ {label}</p>
-}
-
-function AlignmentWorkflowModal({
-  settings,
-  subtitleCount,
-  onClose,
-  onRun
-}: {
-  settings: SettingsState
-  subtitleCount: number
-  onClose: () => void
-  onRun: (draft: AlignmentWorkflowDraft) => void
-}): JSX.Element {
-  const panelRef = useRef<HTMLDivElement>(null)
-  const [draft, setDraft] = useState<AlignmentWorkflowDraft>(() => ({
-    model: settings.model,
-    batchSize: settings.batchSize,
-    confidenceThreshold: settings.confidenceThreshold,
-    mode: 'semanticHybrid',
-    semanticStrength: 'medium',
-    retryFailed: true
-  }))
-
-  useEffect(() => {
-    panelRef.current?.focus()
-  }, [])
-
-  useEffect(() => {
-    function handleEscape(event: KeyboardEvent): void {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', handleEscape)
-    return () => window.removeEventListener('keydown', handleEscape)
-  }, [onClose])
-
-  useEffect(() => {
-    setDraft((d) => ({
-      ...d,
-      model: settings.model,
-      batchSize: settings.batchSize,
-      confidenceThreshold: settings.confidenceThreshold
-    }))
-  }, [settings.model, settings.batchSize, settings.confidenceThreshold])
-
-  function handleBackdropClick(event: MouseEvent<HTMLDivElement>): void {
-    if (event.target === event.currentTarget) onClose()
-  }
-
-  function patchDraft(patch: Partial<AlignmentWorkflowDraft>): void {
-    setDraft((d) => ({ ...d, ...patch }))
-  }
-
-  const estTokens = estimateApiUsageTokens(draft, subtitleCount)
-  const estLabel = estTokens >= 1000 ? `约 ${(estTokens / 1000).toFixed(1)}k Token` : `约 ${estTokens} Token`
-
-  return (
-    <div className="modal-backdrop" role="presentation" onClick={handleBackdropClick}>
-      <div
-        ref={panelRef}
-        className="modal-dialog modal-dialog--workflow"
-        tabIndex={-1}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="alignment-workflow-title"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <header className="modal-header shrink-0">
-          <h2 id="alignment-workflow-title" className="min-w-0 flex-1 truncate text-left text-[16px] font-semibold tracking-tight text-primary">
-            开始 AI 对齐
-          </h2>
-          <button
-            type="button"
-            className="text-meta shrink-0 rounded-lg px-2 text-2xl leading-none hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text-primary)]"
-            onClick={onClose}
-            aria-label="关闭对齐流程"
-          >
-            ×
-          </button>
-        </header>
-
-        <div className="modal-body-scroll min-h-0 flex-1 overflow-y-auto">
-          <div className="modal-section-stack">
-            <p className="text-secondary text-[13px] leading-snug">
-              在此配置模型如何处理字幕。在您点击<span className="text-primary font-medium">「运行对齐」</span>之前，不会发起任何实际任务。
-            </p>
-            <section className="settings-section">
-              <h3 className="settings-heading">模型与批次</h3>
-              <label className="settings-label">
-                模型
-                <select className="settings-select mt-1 w-full" value={draft.model} onChange={(e) => patchDraft({ model: e.currentTarget.value })}>
-                  <option>可选模型</option>
-                  <option>deepseek-chat</option>
-                  <option>deepseek-reasoner</option>
-                </select>
-              </label>
-              <label className="settings-label mt-2">
-                每批条数
-                <input
-                  type="number"
-                  className="settings-input mt-1 w-full"
-                  min={1}
-                  max={500}
-                  step={1}
-                  value={draft.batchSize}
-                  onChange={(e) => {
-                    const next = parseSettingsInt(e.currentTarget.value, 1, 500)
-                    if (next === null) return
-                    patchDraft({ batchSize: next })
-                  }}
-                />
-              </label>
-              <label className="settings-label mt-2">
-                置信度阈值
-                <div className="mt-1 flex min-w-0 items-center gap-2">
-                  <input
-                    type="number"
-                    className="settings-input min-w-0 flex-1"
-                    min={0}
-                    max={100}
-                    step={1}
-                    value={draft.confidenceThreshold}
-                    onChange={(e) => {
-                      const next = parseSettingsInt(e.currentTarget.value, 0, 100)
-                      if (next === null) return
-                      patchDraft({ confidenceThreshold: next })
-                    }}
-                  />
-                  <span className="text-meta shrink-0 text-[13px] font-medium">%</span>
-                </div>
-              </label>
-            </section>
-
-            <section className="settings-section">
-              <h3 className="settings-heading">对齐模式</h3>
-              <p className="settings-label">字幕行与脚本的匹配方式</p>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                <RadioCard
-                  checked={draft.mode === 'sequential'}
-                  label="顺序匹配"
-                  name="alignment-mode"
-                  onChange={() => patchDraft({ mode: 'sequential' })}
-                />
-                <RadioCard
-                  checked={draft.mode === 'semanticHybrid'}
-                  label="语义混合"
-                  name="alignment-mode"
-                  onChange={() => patchDraft({ mode: 'semanticHybrid' })}
-                />
-              </div>
-              <p className="settings-label mt-3">语义匹配强度</p>
-              <div className="mt-2 grid grid-cols-3 gap-2">
-                <RadioCard
-                  checked={draft.semanticStrength === 'low'}
-                  label="低"
-                  name="semantic-strength"
-                  onChange={() => patchDraft({ semanticStrength: 'low' })}
-                />
-                <RadioCard
-                  checked={draft.semanticStrength === 'medium'}
-                  label="中"
-                  name="semantic-strength"
-                  onChange={() => patchDraft({ semanticStrength: 'medium' })}
-                />
-                <RadioCard
-                  checked={draft.semanticStrength === 'high'}
-                  label="高"
-                  name="semantic-strength"
-                  onChange={() => patchDraft({ semanticStrength: 'high' })}
-                />
-              </div>
-              <div className="mt-3">
-                <Toggle checked={draft.retryFailed} label="失败项自动重试" onChange={() => patchDraft({ retryFailed: !draft.retryFailed })} />
-              </div>
-            </section>
-
-            <section className="settings-section">
-              <h3 className="settings-heading">预估</h3>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="metric-card">
-                  <p className="type-field-label mb-1">字幕条数</p>
-                  <p className="type-panel-stat tabular-nums">{subtitleCount}</p>
-                </div>
-                <div className="metric-card">
-                  <p className="type-field-label mb-1">预估 API 用量</p>
-                  <p className="type-panel-stat tabular-nums">{estLabel}</p>
-                  <p className="type-caption mt-1">仅供参考，非计费依据</p>
-                </div>
-              </div>
-            </section>
-          </div>
-        </div>
-
-        <footer className="modal-footer shrink-0">
-          <button type="button" className="settings-footer-button btn-secondary-solid" onClick={onClose}>
-            取消
-          </button>
-          <button
-            type="button"
-            className="settings-footer-button btn-accent-solid"
-            disabled={subtitleCount === 0}
-            onClick={() => onRun(draft)}
-          >
-            运行对齐
-          </button>
-        </footer>
-      </div>
-    </div>
-  )
 }
 
 function SettingsModal({

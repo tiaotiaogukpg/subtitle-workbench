@@ -1208,6 +1208,44 @@
     width: min(94vw, 920px);
   }
 
+  .modal-dialog--ai-alignment {
+    width: min(96vw, 1120px);
+    max-height: 90vh;
+  }
+
+  .ai-alignment-sticky-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 4;
+    display: flex;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 16px 24px;
+    border-top: 1px solid var(--color-border);
+    background: color-mix(in srgb, var(--color-bg-panel) 94%, transparent);
+    backdrop-filter: blur(10px);
+  }
+
+  .ai-alignment-footer__spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: ai-alignment-footer-spin 0.65s linear infinite;
+  }
+
+  @keyframes ai-alignment-footer-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
   .problems-panel {
     border-radius: 10px;
     border: none;

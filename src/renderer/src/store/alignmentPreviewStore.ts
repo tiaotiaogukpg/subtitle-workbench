@@ -1,31 +1,35 @@
 import { create } from 'zustand'
-import type { DeepSeekAlignmentMatchRow } from '../lib/realAlignmentBatch'
+import type { CandidateSegmentGroup } from '../types'
+import type { AlignmentMatchRow, AlignmentMatchValidated } from '../lib/alignment/types'
+import type { AlignmentReport } from '../lib/alignment/completeness'
+import type { SmallBatchAlignmentDebug } from '../lib/alignment/smallBatchPipeline'
 
-export type AlignmentPreviewDebug = {
-  promptTokenEstimate: number
-  rawResponse: string
-  parseError: string | null
-  parsedJson: string | null
-  latencyMs: number
-  usagePromptTokens: number | null
-}
+export type AlignmentPreviewDebug = SmallBatchAlignmentDebug
 
 interface AlignmentPreviewState {
   phase: 'idle' | 'loading' | 'ready' | 'error'
   runError: string | null
-  previewMatches: DeepSeekAlignmentMatchRow[] | null
+  previewMatches: AlignmentMatchValidated[] | null
+  applyableMatches: AlignmentMatchRow[] | null
+  lastCandidateGroups: CandidateSegmentGroup[]
+  lastReport: AlignmentReport | null
   batchSubtitleIds: number[]
   segmentIdsInContext: string[]
+  englishCursor: number
   debug: AlignmentPreviewDebug | null
 }
 
 interface AlignmentPreviewActions {
   reset: () => void
-  startLoading: (batchSubtitleIds: number[], segmentIdsInContext: string[]) => void
+  setEnglishCursor: (cursor: number) => void
+  startLoading: () => void
   setSuccess: (payload: {
-    matches: DeepSeekAlignmentMatchRow[]
+    validated: AlignmentMatchValidated[]
+    applyable: AlignmentMatchRow[]
+    candidateGroups: CandidateSegmentGroup[]
     batchSubtitleIds: number[]
     segmentIdsInContext: string[]
+    report: AlignmentReport
     debug: AlignmentPreviewDebug
   }) => void
   setRunError: (message: string, debug: AlignmentPreviewDebug | null) => void
@@ -35,31 +39,47 @@ const initial: AlignmentPreviewState = {
   phase: 'idle',
   runError: null,
   previewMatches: null,
+  applyableMatches: null,
+  lastCandidateGroups: [],
+  lastReport: null,
   batchSubtitleIds: [],
   segmentIdsInContext: [],
+  englishCursor: 0,
   debug: null
 }
 
 export const useAlignmentPreviewStore = create<AlignmentPreviewState & AlignmentPreviewActions>((set) => ({
   ...initial,
 
-  reset: () => set({ ...initial }),
+  reset: () =>
+    set((s) => ({
+      ...initial,
+      englishCursor: s.englishCursor
+    })),
 
-  startLoading: (batchSubtitleIds, segmentIdsInContext) =>
+  setEnglishCursor: (englishCursor) => set({ englishCursor }),
+
+  startLoading: () =>
     set({
       phase: 'loading',
       runError: null,
       previewMatches: null,
-      batchSubtitleIds,
-      segmentIdsInContext,
+      applyableMatches: null,
+      lastCandidateGroups: [],
+      lastReport: null,
+      batchSubtitleIds: [],
+      segmentIdsInContext: [],
       debug: null
     }),
 
-  setSuccess: ({ matches, batchSubtitleIds, segmentIdsInContext, debug }) =>
+  setSuccess: ({ validated, applyable, candidateGroups, batchSubtitleIds, segmentIdsInContext, report, debug }) =>
     set({
       phase: 'ready',
       runError: null,
-      previewMatches: matches,
+      previewMatches: validated,
+      applyableMatches: applyable,
+      lastCandidateGroups: candidateGroups,
+      lastReport: report,
       batchSubtitleIds,
       segmentIdsInContext,
       debug
@@ -70,6 +90,7 @@ export const useAlignmentPreviewStore = create<AlignmentPreviewState & Alignment
       phase: 'error',
       runError: message,
       previewMatches: null,
+      applyableMatches: null,
       debug: debug ?? s.debug,
       batchSubtitleIds: s.batchSubtitleIds,
       segmentIdsInContext: s.segmentIdsInContext
