@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { FullFileAlignmentReport } from '../lib/alignment/completeness'
-import type { AiAlignmentMode, AiAlignmentRunConfig } from '../types'
+import type { AiAlignmentRunConfig } from '../types'
 
 /** 整文件对齐因 drift 暂停时保存的续跑上下文（不写入本批字幕）。 */
 export interface FullFileDriftContinuation {
@@ -28,7 +28,6 @@ export type AlignmentSessionStatus =
 
 export interface AlignmentSessionSnapshot {
   status: AlignmentSessionStatus
-  mode: AiAlignmentMode | null
   progressPct: number
   currentBatchIndex: number
   totalBatches: number
@@ -74,7 +73,6 @@ interface AlignmentSessionActions {
 
 const idleSnapshot: AlignmentSessionSnapshot = {
   status: 'idle',
-  mode: null,
   progressPct: 0,
   currentBatchIndex: 0,
   totalBatches: 0,
@@ -101,7 +99,6 @@ export const useAlignmentSessionStore = create<AlignmentSessionSnapshot & Alignm
       set({
         ...idleSnapshot,
         status: 'running',
-        mode: config.mode,
         activeConfig: config,
         totalSubtitleCount: totalSubtitles,
         totalBatches,

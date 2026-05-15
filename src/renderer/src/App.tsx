@@ -198,6 +198,10 @@ function App(): JSX.Element {
     setAlignmentModalOpen(true)
   }, [])
 
+  const closeAlignmentModal = useCallback(() => {
+    setAlignmentModalOpen(false)
+  }, [])
+
   const handleChineseSrtFileChange = useCallback(
     async (event: ChangeEvent<HTMLInputElement>): Promise<void> => {
       const input = event.currentTarget
@@ -244,10 +248,6 @@ function App(): JSX.Element {
       const msg = err instanceof Error ? err.message : String(err)
       window.alert(`无法导入英文文稿：${msg}`)
     }
-  }, [])
-
-  const closeAlignmentModal = useCallback(() => {
-    setAlignmentModalOpen(false)
   }, [])
 
   return (
@@ -664,7 +664,6 @@ const sessionStatusLabel: Record<string, string> = {
 function AlignmentStatus({ settings }: { settings: SettingsState }): JSX.Element {
   const subtitles = useSubtitleStore((s) => s.subtitles)
   const sessionStatus = useAlignmentSessionStore((s) => s.status)
-  const sessionMode = useAlignmentSessionStore((s) => s.mode)
   const progressPct = useAlignmentSessionStore((s) => s.progressPct)
   const lastSummary = useAlignmentSessionStore((s) => s.lastSummary)
   const lastError = useAlignmentSessionStore((s) => s.lastError)
@@ -691,8 +690,7 @@ function AlignmentStatus({ settings }: { settings: SettingsState }): JSX.Element
       l.problems.length > 0
   ).length
 
-  const modeLabel =
-    sessionMode === 'full_file' ? '整文件自动对齐' : sessionMode === 'batch_test' ? '调试小批' : '—'
+  const modeLabel = sessionStatus === 'idle' ? '—' : '整文件自动对齐'
 
   return (
     <aside className="app-panel alignment-panel flex h-full min-h-0 min-w-0 flex-col overflow-hidden">

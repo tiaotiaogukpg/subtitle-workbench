@@ -146,88 +146,6 @@ function duplicateSegmentIdsFromUsage(usage: Map<string, number>): string[] {
   return [...usage.entries()].filter(([, count]) => count > 1).map(([id]) => id)
 }
 
-async function runSingleBatchTest(
-  config: AiAlignmentRunConfig,
-  generation: number
-): Promise<void> {
-  const session = useAlignmentSessionStore.getState()
-  const subtitles = useSubtitleStore.getState().subtitles
-  const currentSubtitleId = useSubtitleStore.getState().currentSubtitleId
-  const segments = useScriptPoolStore.getState().segments
-  const preview = useAlignmentPreviewStore.getState()
-  const englishCursor = preview.englishCursor
-
-  session.noteBatchProgress({
-    batchIndex: 0,
-    totalBatches: 1,
-    batchLabel: '请求中…',
-    processingSubtitleId: currentSubtitleId,
-    processedSubtitleCount: 0,
-    englishCursor,
-    matchedDelta: 0,
-    needsReviewDelta: 0,
-    failedDelta: 0
-  })
-
-  if (generation !== runGeneration) return
-
-  const result = await runSmallBatchAlignment({
-    subtitles,
-    currentSubtitleId,
-    segments,
-    englishCursor,
-    model: config.model,
-    batchSize: config.batchSize,
-    confidenceThresholdPct: config.confidenceThreshold
-  })
-
-  if (generation !== runGeneration) return
-
-  if (!result.ok) {
-    useAlignmentPreviewStore.getState().setRunError(result.error, result.debug)
-    useAlignmentSessionStore.getState().failSession(result.error)
-    return
-  }
-
-  const batchLabel =
-    result.batch.length > 0
-      ? `#${result.batch[0]!.id}–#${result.batch[result.batch.length - 1]!.id}`
-      : '—'
-  const stats = countBatchStats(
-    result.batchSubtitleIds,
-    result.validated,
-    config.confidenceThreshold,
-    result.candidateGroups,
-    result.englishCursor,
-    result.englishPoolSize
-  )
-
-  useAlignmentPreviewStore.getState().setSuccess({
-    validated: result.validated,
-    applyable: result.applyable,
-    candidateGroups: result.candidateGroups,
-    batchSubtitleIds: result.batchSubtitleIds,
-    report: result.report,
-    debug: result.debug
-  })
-
-  useAlignmentSessionStore.getState().noteBatchProgress({
-    batchIndex: 1,
-    totalBatches: 1,
-    batchLabel,
-    processingSubtitleId: null,
-    processedSubtitleCount: result.batch.length,
-    englishCursor: result.englishCursor,
-    matchedDelta: stats.matched,
-    needsReviewDelta: stats.needsReview,
-    failedDelta: stats.failed
-  })
-
-  useAlignmentSessionStore.getState().completeSession(
-    `调试小批完成 · 可应用 ${result.applyable.length}/${result.batch.length} · 请在 Debug 区手动应用`
-  )
-}
-
 async function runFullFileAlignment(
   config: AiAlignmentRunConfig,
   generation: number,
@@ -423,10 +341,7 @@ export function startAlignmentSession(config: AiAlignmentRunConfig, apiKey: stri
   }
 
   const subtitles = useSubtitleStore.getState().subtitles
-  const totalBatches =
-    config.mode === 'full_file'
-      ? Math.max(1, Math.ceil(subtitles.length / config.batchSize))
-      : 1
+  const totalBatches = Math.max(1, Math.ceil(subtitles.length / config.batchSize))
 
   runGeneration += 1
   const generation = runGeneration
@@ -439,11 +354,7 @@ export function startAlignmentSession(config: AiAlignmentRunConfig, apiKey: stri
 
   void (async () => {
     try {
-      if (config.mode === 'full_file') {
-        await runFullFileAlignment(config, generation)
-      } else {
-        await runSingleBatchTest(config, generation)
-      }
+      await runFullFileAlignment(config, generation)
     } catch (e) {
       if (generation !== runGeneration) return
       const msg = e instanceof Error ? e.message : String(e)
@@ -471,7 +382,7 @@ export function resumeFullFileFromDrift(): string | null {
   }
   const c = session.driftContinuation
   const config = session.activeConfig
-  if (!config || config.mode !== 'full_file') return '无效会话配置。'
+  if (!config) return '无效会话配置。'
 
   useAlignmentSessionStore.getState().patchProgress({
     status: 'running',
@@ -508,7 +419,7 @@ export function skipDriftBatchAndContinue(): string | null {
   }
   const c = session.driftContinuation
   const config = session.activeConfig
-  if (!config || config.mode !== 'full_file') return '无效会话配置。'
+  if (!config) return '无效会话配置。'
 
   useSubtitleStore.getState().markAlignmentDriftSkipBatch(c.batchSubtitleIds)
 
@@ -565,7 +476,7 @@ export async function retryDriftBatchAlignment(): Promise<string | null> {
   }
   const c = session.driftContinuation
   const config = session.activeConfig
-  if (!config || config.mode !== 'full_file') return '无效会话配置。'
+  if (!config) return '无效会话配置。'
 
   const subtitles = useSubtitleStore.getState().subtitles
   const segments = useScriptPoolStore.getState().segments

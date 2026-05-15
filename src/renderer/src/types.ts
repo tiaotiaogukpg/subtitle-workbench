@@ -70,12 +70,9 @@ export interface SettingsState {
   fontSize: number
 }
 
-export type AiAlignmentMode = 'batch_test' | 'full_file'
-
-/** AI Alignment 工作流中的运行参数（仅真实 DeepSeek）。 */
+/** AI Alignment 工作流中的运行参数（仅真实 DeepSeek · 整文件）。 */
 export interface AiAlignmentRunConfig {
   model: string
   batchSize: number
   confidenceThreshold: number
-  mode: AiAlignmentMode
 }
