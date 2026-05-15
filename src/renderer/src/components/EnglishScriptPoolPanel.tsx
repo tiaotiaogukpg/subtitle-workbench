@@ -45,10 +45,10 @@ export function EnglishScriptPoolPanel(): JSX.Element {
   return (
     <aside className="app-panel script-pool-panel flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
       <div className="app-panel-header script-pool-panel__head shrink-0 px-3 py-2">
-        <h2 className="ui-section-title">Script Pool</h2>
-        <p className="type-caption mt-0.5">
-          {segments.length} 条
-          {listFilter !== 'all' ? ` · 显示 ${visible.length}` : null}
+        <h2 className="ui-section-title">英文原稿</h2>
+        <p className="type-caption script-pool-panel__caption mt-0.5">
+          Script pool · {segments.length} 条
+          {listFilter !== 'all' ? ` · 显示 ${visible.length}` : ''}
         </p>
         <div className="script-pool-filter mt-2 flex flex-wrap gap-1.5" role="toolbar" aria-label="脚本池筛选">
           {FILTER_OPTIONS.map((opt) => {
@@ -68,32 +68,32 @@ export function EnglishScriptPoolPanel(): JSX.Element {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto overflow-x-hidden p-2">
+      <div className="script-pool-panel__scroll min-h-0 flex-1 space-y-2 overflow-y-auto overflow-x-hidden p-2">
         {segments.length === 0 ? (
-          <div className="type-caption text-meta rounded-lg border border-dashed border-[var(--color-border-subtle)] px-3 py-6 text-center leading-relaxed">
+          <div className="type-caption script-pool-empty rounded-lg border border-dashed px-3 py-6 text-center leading-relaxed">
             暂无原稿脚本
-            <span className="mt-1 block text-[12px] text-[var(--color-text-meta)]">
-              使用工具栏「导入英文文稿」载入 .txt（支持中英混排、说话人行等）
-            </span>
+            <span className="script-pool-empty__hint mt-1 block">使用工具栏「导入英文文稿」载入 .txt（支持中英混排、说话人行等）</span>
           </div>
         ) : visible.length === 0 ? (
-          <div className="type-caption text-meta rounded-lg border border-dashed border-[var(--color-border-subtle)] px-3 py-6 text-center leading-relaxed">
+          <div className="type-caption script-pool-empty rounded-lg border border-dashed px-3 py-6 text-center leading-relaxed">
             当前筛选下无条目
-            <span className="mt-1 block text-[12px] text-[var(--color-text-meta)]">请切换筛选或导入其它内容</span>
+            <span className="script-pool-empty__hint mt-1 block">请切换筛选或导入其它内容</span>
           </div>
         ) : (
           visible.map((seg, index) => {
             const displayIndex = index + 1
             const isSelected = seg.id === selectedSegmentId
 
+            const isDimmed = seg.language === 'english' && !seg.used
+
             return (
               <div
                 key={seg.id}
-                className={`script-pool-item !p-0 !gap-0${isSelected ? ' script-pool-item--selected' : ''}`}
+                className={`script-pool-item${isSelected ? ' script-pool-item--selected' : ''}${isDimmed ? ' script-pool-item--dim' : ''}`}
               >
                 <button
                   type="button"
-                  className="w-full rounded-lg px-2 py-2 text-left transition-colors hover:bg-[var(--color-bg-hover)]"
+                  className="script-pool-item__hit"
                   title={
                     seg.language === 'english'
                       ? seg.used
@@ -118,8 +118,8 @@ export function EnglishScriptPoolPanel(): JSX.Element {
                       ) : null}
                     </div>
                   </div>
-                  <span className="type-caption text-meta mt-0.5 block text-left">L{seg.sourceLine}</span>
-                  <span className="script-pool-item__text mt-1 block text-left leading-snug text-[var(--color-text-primary)]">
+                  <span className="type-caption script-pool-item__line-no mt-0.5 block text-left">L{seg.sourceLine}</span>
+                  <span className="script-pool-item__text mt-1 block text-left leading-snug">
                     {shortPreview(seg.text)}
                   </span>
                 </button>

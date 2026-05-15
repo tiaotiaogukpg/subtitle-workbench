@@ -26,6 +26,14 @@ export interface AlignmentSessionSnapshot {
   lastSummary: string
   activeConfig: AiAlignmentRunConfig | null
   finalReport: FullFileAlignmentReport | null
+  /** 首轮完成后 Retry Coverage Pass。 */
+  coverageRetryPhase: 'idle' | 'running' | 'completed'
+  /** 进入 Retry 前：已有英文且为 confirmed / low_confidence 的行数。 */
+  firstPassMatchedCount: number
+  /** Retry 各批累计写入的可结构对齐行数。 */
+  retryMatchedDeltaCount: number
+  /** Retry 全部结束后仍符合 retry 目标的行数。 */
+  retryStillNeedsReviewCount: number
 }
 
 interface AlignmentSessionActions {
@@ -64,7 +72,11 @@ const idleSnapshot: AlignmentSessionSnapshot = {
   lastError: null,
   lastSummary: '尚未运行',
   activeConfig: null,
-  finalReport: null
+  finalReport: null,
+  coverageRetryPhase: 'idle',
+  firstPassMatchedCount: 0,
+  retryMatchedDeltaCount: 0,
+  retryStillNeedsReviewCount: 0
 }
 
 export const useAlignmentSessionStore = create<AlignmentSessionSnapshot & AlignmentSessionActions>(

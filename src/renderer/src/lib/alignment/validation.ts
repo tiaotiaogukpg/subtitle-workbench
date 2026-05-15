@@ -52,8 +52,24 @@ function addFlag(
   map.get(subtitleId)!.add(flag)
 }
 
+function areSubtitlesConsecutiveInBatchOrder(
+  idA: number,
+  idB: number,
+  batchOrder: number[]
+): boolean {
+  for (let k = 0; k < batchOrder.length - 1; k++) {
+    const u = batchOrder[k]!
+    const v = batchOrder[k + 1]!
+    if ((idA === u && idB === v) || (idA === v && idB === u)) return true
+  }
+  return false
+}
+
 /** 供调试面板：根据已解析的 span 粗查批内重叠（与校验阈值一致）。 */
-export function buildSpanPairDiagnostics(rows: AlignmentMatchValidated[]): string[] {
+export function buildSpanPairDiagnostics(
+  rows: AlignmentMatchValidated[],
+  orderedSubtitleIds?: number[]
+): string[] {
   const eligible = rows.filter(rowSpanEligible)
   const notes: string[] = []
   for (let i = 0; i < eligible.length; i++) {
@@ -71,9 +87,19 @@ export function buildSpanPairDiagnostics(rows: AlignmentMatchValidated[]): strin
       const olen = spanOverlapLen(a0, a1, b0, b1)
       const minLen = Math.min(a1 - a0, b1 - b0)
       if (minLen > 0 && olen / minLen >= SPAN_OVERLAP_DUPLICATE_RATIO) {
-        notes.push(
-          `heavy_overlap #${a.subtitleId} vs #${b.subtitleId} (${Math.round((100 * olen) / minLen)}% of shorter span)`
-        )
+        const consecutive =
+          orderedSubtitleIds &&
+          orderedSubtitleIds.length > 0 &&
+          areSubtitlesConsecutiveInBatchOrder(a.subtitleId, b.subtitleId, orderedSubtitleIds)
+        if (consecutive) {
+          notes.push(
+            `可修剪重叠 #${a.subtitleId} vs #${b.subtitleId} (${Math.round((100 * olen) / minLen)}% of shorter span)`
+          )
+        } else {
+          notes.push(
+            `heavy_overlap #${a.subtitleId} vs #${b.subtitleId} (${Math.round((100 * olen) / minLen)}% of shorter span)`
+          )
+        }
       }
     }
   }
@@ -198,6 +224,14 @@ export function validateAlignmentResult(input: ValidateAlignmentResultInput): Al
       const olen = spanOverlapLen(a0, a1, b0, b1)
       const minLen = Math.min(a1 - a0, b1 - b0)
       if (minLen > 0 && olen / minLen >= SPAN_OVERLAP_DUPLICATE_RATIO) {
+        const consecutive = areSubtitlesConsecutiveInBatchOrder(
+          a.subtitleId,
+          b.subtitleId,
+          expectedSubtitleIds
+        )
+        if (consecutive) {
+          continue
+        }
         addFlag(batchExtra, a.subtitleId, 'duplicate_span')
         addFlag(batchExtra, b.subtitleId, 'duplicate_span')
       }
@@ -226,8 +260,11 @@ export function validateAlignmentResult(input: ValidateAlignmentResultInput): Al
       later.spanEnd! - later.spanStart!
     )
     if (minLen > 0 && olen / minLen >= ADJACENT_SPAN_OVERLAP_RATIO) {
-      addFlag(batchExtra, earlier.subtitleId, 'adjacent_span_heavy_overlap')
-      addFlag(batchExtra, later.subtitleId, 'adjacent_span_heavy_overlap')
+      if (earlier.spanStart === later.spanStart && earlier.spanEnd === later.spanEnd) {
+        continue
+      }
+      addFlag(batchExtra, earlier.subtitleId, 'span_overlap_needs_trim')
+      addFlag(batchExtra, later.subtitleId, 'span_overlap_needs_trim')
     }
   }
 

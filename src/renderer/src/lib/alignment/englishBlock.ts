@@ -10,7 +10,24 @@ export interface SegmentLocalRange {
   end: number
 }
 
-/** Prompt 中的只读 local English context（不可作为 groupId 直接选用）。 */
+/** 时间比例估算窗口的元信息（每批独立时间窗）。 */
+export interface TimeRatioContextMeta {
+  batchStartMs: number
+  batchEndMs: number
+  batchMidMs: number
+  totalDurationMs: number
+  timelineStartMs: number
+  batchMidRatio: number
+  englishCenterIndex: number
+  windowStartSeg: number
+  windowEndSeg: number
+  contextBeforeSegs: number
+  contextAfterSegs: number
+  windowTier: 1 | 2 | 3 | 4
+  contextCharCount: number
+}
+
+/** Prompt 中的只读 English context（整窗原文，供模型在原句内对齐）。 */
 export interface LocalEnglishContextBlock {
   segmentIds: string[]
   text: string
@@ -26,6 +43,8 @@ export interface LocalEnglishContextBlock {
   contextEndGlobalOffset: number
   /** 各 segment 在 `text` 内的局部字符区间（与整稿 join+normalize 一致）。 */
   segmentLocalRanges: SegmentLocalRange[]
+  /** 本批 context 由字幕时间比例估算时填充；tier 3 = 整稿 retry。 */
+  timeRatio?: TimeRatioContextMeta
 }
 
 /**
@@ -101,28 +120,47 @@ function computeSegmentLocalRanges(
   return ranges
 }
 
-/**
- * 整篇纯英文稿拼接为单一 English context（无 cursor、无滑动窗口）。
- * 用于 DeepSeek 在全稿上做语义切分与对齐。
- */
-export function buildFullFileEnglishContextBlock(englishSegments: ScriptSegment[]): LocalEnglishContextBlock | null {
-  const pool = englishSegments
+/** 从英文池下标区间 [startSeg, endSeg]（含端点）构建 context block。 */
+export function buildEnglishContextBlockFromSegmentRange(
+  pool: ScriptSegment[],
+  startSeg: number,
+  endSeg: number,
+  timeRatio?: TimeRatioContextMeta
+): LocalEnglishContextBlock | null {
   if (pool.length === 0) return null
-  if (pool.some((s) => s.language !== 'english' || !isPureEnglishText(s.text))) return null
+  const start = Math.min(Math.max(0, startSeg), pool.length - 1)
+  const end = Math.min(Math.max(start, endSeg), pool.length - 1)
+  const segs = pool.slice(start, end + 1)
+  if (segs.some((s) => s.language !== 'english' || !isPureEnglishText(s.text))) return null
 
-  const end = pool.length - 1
-  const text = normalizeGroupText(pool.map((s) => s.text.trim()).join(' '))
-  const { contextStartGlobalOffset, contextEndGlobalOffset } = computeContextGlobalOffsets(pool, 0, end, text)
-  const segmentLocalRanges = computeSegmentLocalRanges(pool, 0, text)
+  const text = normalizeGroupText(segs.map((s) => s.text.trim()).join(' '))
+  const { contextStartGlobalOffset, contextEndGlobalOffset } = computeContextGlobalOffsets(
+    pool,
+    start,
+    end,
+    text
+  )
+  const segmentLocalRanges = computeSegmentLocalRanges(segs, start, text)
 
   return {
-    segmentIds: pool.map((s) => s.id),
+    segmentIds: segs.map((s) => s.id),
     text,
-    startSegmentIndex: 0,
+    startSegmentIndex: start,
     endSegmentIndex: end,
-    segmentCount: pool.length,
+    segmentCount: segs.length,
     contextStartGlobalOffset,
     contextEndGlobalOffset,
-    segmentLocalRanges
+    segmentLocalRanges,
+    timeRatio
   }
+}
+
+/** 整稿 context（仅作 tier-3 扩大重试，不作默认）。 */
+export function buildFullFileEnglishContextBlock(englishSegments: ScriptSegment[]): LocalEnglishContextBlock | null {
+  if (englishSegments.length === 0) return null
+  return buildEnglishContextBlockFromSegmentRange(
+    englishSegments,
+    0,
+    englishSegments.length - 1
+  )
 }

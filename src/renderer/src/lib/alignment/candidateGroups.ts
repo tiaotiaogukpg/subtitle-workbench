@@ -5,7 +5,7 @@ import { normalizeGroupText } from './textUtils'
 
 /**
  * 仅生成「单段 = 单组」的参考列表，供调试 / 可视化；
- * 主对齐流程不依赖候选组选择，也不使用游标窗口。
+ * 主对齐流程不依赖候选组选择。
  */
 export interface BuildDebugCandidateGroupsOptions {
   englishSegments: ScriptSegment[]
@@ -21,15 +21,8 @@ function countWords(s: string): number {
 
 export { normalizeGroupText } from './textUtils'
 
-export function candidateGroupsById(groups: CandidateSegmentGroup[]): Map<string, CandidateSegmentGroup> {
-  return new Map(groups.map((g) => [g.id, g]))
-}
-
-/** @deprecated 请用 {@link buildDebugCandidateGroups}。 */
-export const buildCandidateGroups = buildDebugCandidateGroups
-
 /**
- * Debug：纯英文池内每个片段单独成组（无 glue、无多段构造、无游标窗口）。
+ * Debug：纯英文池内每个片段单独成组（无 glue、无多段构造）。
  */
 export function buildDebugCandidateGroups(
   options: BuildDebugCandidateGroupsOptions

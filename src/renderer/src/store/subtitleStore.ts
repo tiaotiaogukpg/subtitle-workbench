@@ -32,12 +32,23 @@ export interface SubtitleStoreActions {
       candidates: CandidateMatch[]
     }>
   ) => void
-  /** 标记需复查：不修改 english，可写入 candidates / problems。 */
+  /** Retry Coverage Pass：仅更新非 confirmed/manual 行。 */
+  applyRetryCoverageMatchBatch: (
+    entries: Array<{
+      subtitleId: number
+      primary: AlignmentMatchRow
+      status: SubtitleStatus
+      problems: string[]
+      candidates: CandidateMatch[]
+    }>
+  ) => void
+  /** 标记需复查：默认不修改 english；若 clearEnglish 则清空英文与 matchedSegmentIds。 */
   applyAlignmentReviewStates: (
     entries: Array<{
       subtitleId: number
       candidates?: CandidateMatch[]
       problems: string[]
+      clearEnglish?: boolean
     }>
   ) => void
   /** 用户跳过本批：全部 needs_review，不写入英文。 */
@@ -133,6 +144,32 @@ export const useSubtitleStore = create<SubtitleStore>((set, get) => ({
     }))
   },
 
+  applyRetryCoverageMatchBatch: (entries) => {
+    if (entries.length === 0) return
+    const validSeg = new Set(useScriptPoolStore.getState().segments.map((seg) => seg.id))
+    const byId = new Map(entries.map((e) => [e.subtitleId, e]))
+    set((s) => ({
+      subtitles: s.subtitles.map((line) => {
+        const entry = byId.get(line.id)
+        if (!entry) return line
+        if (line.status === 'confirmed' || line.status === 'manual') return line
+        const primary = entry.primary
+        const filteredIds = primary.matchedSegmentIds.filter((id) => validSeg.has(id))
+        const topPct = confidenceToPercent(primary.confidence)
+        return {
+          ...line,
+          english: primary.english.trim(),
+          matchedSegmentIds: filteredIds,
+          confidence: topPct,
+          status: entry.status,
+          candidates: entry.candidates,
+          problems: mergeAlignmentProblems(line.problems, entry.problems),
+          manuallyEdited: false
+        }
+      })
+    }))
+  },
+
   applyAlignmentReviewStates: (entries) => {
     if (entries.length === 0) return
     const byId = new Map(entries.map((e) => [e.subtitleId, e]))
@@ -140,8 +177,12 @@ export const useSubtitleStore = create<SubtitleStore>((set, get) => ({
       subtitles: s.subtitles.map((line) => {
         const entry = byId.get(line.id)
         if (!entry) return line
+        const cleared = entry.clearEnglish
+          ? { english: '', matchedSegmentIds: [] as string[] }
+          : {}
         return {
           ...line,
+          ...cleared,
           confidence: 0,
           status: 'needs_review' as SubtitleStatus,
           candidates: entry.candidates?.length ? entry.candidates : line.candidates,

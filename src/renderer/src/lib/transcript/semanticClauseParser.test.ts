@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { isQuestionClause, parseEnglishSemanticClauses } from './semanticClauseParser'
+import { parseEnglishSemanticClauses } from './semanticClauseParser'
 
 describe('parseEnglishSemanticClauses (coarse debug only)', () => {
   it('splits on sentence boundaries', () => {
-    const input = "First sentence. Second sentence!"
+    const input = 'First sentence. Second sentence!'
     const clauses = parseEnglishSemanticClauses(input)
     expect(clauses.length).toBeGreaterThanOrEqual(2)
     expect(clauses.some((c) => /First sentence/i.test(c.text))).toBe(true)
     expect(clauses.some((c) => /Second sentence/i.test(c.text))).toBe(true)
   })
 
-  it('marks WH question clauses', () => {
+  it('marks clauses ending with ? as question', () => {
     const input = 'Intro. Which way did he go?'
     const clauses = parseEnglishSemanticClauses(input)
     const q = clauses.find((c) => c.text.includes('Which way'))
@@ -25,18 +25,9 @@ describe('parseEnglishSemanticClauses (coarse debug only)', () => {
   })
 
   it('uses line_break for first clause of second line', () => {
-    const input = "Line one.\nLine two."
+    const input = 'Line one.\nLine two.'
     const clauses = parseEnglishSemanticClauses(input)
     const second = clauses.find((c) => c.text.startsWith('Line two'))
     expect(second?.splitReason).toBe('line_break')
-  })
-})
-
-describe('isQuestionClause', () => {
-  it('detects WH questions', () => {
-    expect(isQuestionClause('Which way did he go?')).toBe(true)
-  })
-  it('does not tag informal trailing question', () => {
-    expect(isQuestionClause('wait, what?')).toBe(false)
   })
 })

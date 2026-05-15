@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom'
 import { downloadBilingualSrt } from './lib/srtExporter'
 import { parseSrt } from './lib/srtParser'
 import { parseMixedTranscript } from './lib/mixedTranscriptParser'
-import { parseEnglishSemanticClauses } from './lib/transcript/semanticClauseParser'
 import { EnglishScriptPoolPanel } from './components/EnglishScriptPoolPanel'
 import { AiAlignmentWorkflowModal } from './components/AiAlignmentWorkflowModal'
 import { AlignmentReviewPanel } from './components/AlignmentReviewPanel'
@@ -17,6 +16,7 @@ import {
   useAlignmentSessionStore
 } from './store/alignmentSessionStore'
 import { selectCurrentSubtitle, useSubtitleStore } from './store/subtitleStore'
+import { useUiSettingsStore } from './store/uiSettingsStore'
 import type { SettingsState, SubtitleStatus } from './types'
 import { DEFAULT_USER_SETTINGS } from '../../shared/settingsDefaults'
 
@@ -241,21 +241,6 @@ function App(): JSX.Element {
     try {
       const raw = await file.text()
       const segments = parseMixedTranscript(raw)
-      if (import.meta.env.DEV) {
-        for (const seg of segments) {
-          if (seg.language !== 'english') continue
-          const clauses = parseEnglishSemanticClauses(seg.text)
-          console.debug('[semantic-clauses]', {
-            sourceLine: seg.sourceLine,
-            source: seg.text,
-            clauses: clauses.map((c) => ({
-              text: c.text,
-              splitReason: c.splitReason,
-              wordCount: c.wordCount
-            }))
-          })
-        }
-      }
       useScriptPoolStore.getState().setSegments(segments)
       if (segments.length === 0) {
         window.alert('文件内容为空，或未切分出任何句子。')
@@ -670,6 +655,7 @@ const sessionStatusLabel: Record<string, string> = {
 }
 
 function AlignmentStatus({ settings }: { settings: SettingsState }): JSX.Element {
+  const debugMode = useUiSettingsStore((s) => s.debugMode)
   const subtitles = useSubtitleStore((s) => s.subtitles)
   const sessionStatus = useAlignmentSessionStore((s) => s.status)
   const progressPct = useAlignmentSessionStore((s) => s.progressPct)
@@ -684,6 +670,10 @@ function AlignmentStatus({ settings }: { settings: SettingsState }): JSX.Element
   const sessionMatchedCount = useAlignmentSessionStore((s) => s.sessionMatchedCount)
   const sessionNeedsReviewCount = useAlignmentSessionStore((s) => s.sessionNeedsReviewCount)
   const sessionFailedCount = useAlignmentSessionStore((s) => s.sessionFailedCount)
+  const coverageRetryPhase = useAlignmentSessionStore((s) => s.coverageRetryPhase)
+  const firstPassMatchedCount = useAlignmentSessionStore((s) => s.firstPassMatchedCount)
+  const retryMatchedDeltaCount = useAlignmentSessionStore((s) => s.retryMatchedDeltaCount)
+  const retryStillNeedsReviewCount = useAlignmentSessionStore((s) => s.retryStillNeedsReviewCount)
   const finalReport = useAlignmentSessionStore((s) => s.finalReport)
   const bridge = typeof window !== 'undefined' ? window.bilingualSubtitleAligner : undefined
   const aiReady = Boolean(bridge?.alignDeepSeekBatch)
@@ -703,10 +693,16 @@ function AlignmentStatus({ settings }: { settings: SettingsState }): JSX.Element
     <aside className="app-panel alignment-panel flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
       <div className="app-panel-header alignment-panel__head shrink-0 px-4 py-2.5">
         <h2 className="ui-section-title">对齐</h2>
-        <p className="type-caption alignment-monitor-tag mt-1">会话监控</p>
-        <p className="type-caption mt-1 leading-snug">
-          {settings.provider} · <span className="text-secondary">{settings.model}</span>
-        </p>
+        {debugMode ? (
+          <p className="type-caption alignment-monitor-tag mt-1">开发者 · 会话监控</p>
+        ) : (
+          <p className="type-caption mt-1 text-secondary">进度与当前批次</p>
+        )}
+        {debugMode ? (
+          <p className="type-caption mt-1 leading-snug">
+            {settings.provider} · <span className="text-secondary">{settings.model}</span>
+          </p>
+        ) : null}
       </div>
 
       <div className="alignment-panel__body min-h-0 flex-1 space-y-4 overflow-y-auto p-3">
@@ -717,8 +713,8 @@ function AlignmentStatus({ settings }: { settings: SettingsState }): JSX.Element
               {sessionStatusLabel[sessionStatus] ?? sessionStatus}
             </span>
           </div>
-          <Metric label="模式" value={modeLabel} />
-          <Metric label="AI Ready" value={aiReady ? '是' : '否'} />
+          {debugMode ? <Metric label="模式" value={modeLabel} /> : null}
+          {debugMode ? <Metric label="AI Ready" value={aiReady ? '是' : '否'} /> : null}
           <div className="mt-2">
             <div className="mb-1 flex items-baseline justify-between gap-2">
               <span className="type-field-label">进度</span>
@@ -755,33 +751,70 @@ function AlignmentStatus({ settings }: { settings: SettingsState }): JSX.Element
           />
         </div>
 
+        {debugMode ? (
+          <div className="metric-stack space-y-3">
+            <p className="type-field-label">Coverage · Retry</p>
+            <Metric label="首轮较好匹配" value={String(firstPassMatchedCount)} />
+            <Metric
+              label="Retry 阶段"
+              value={
+                sessionStatus === 'idle' && coverageRetryPhase === 'idle'
+                  ? '—'
+                  : coverageRetryPhase === 'running'
+                    ? '进行中'
+                    : coverageRetryPhase === 'completed'
+                      ? '已完成'
+                      : '—'
+              }
+            />
+            <Metric label="Retry 补齐" value={String(retryMatchedDeltaCount)} />
+            <Metric label="仍待复查" value={String(retryStillNeedsReviewCount)} />
+          </div>
+        ) : null}
+
         <div className="metric-stack space-y-3">
-          <p className="type-field-label">本会话统计</p>
+          <p className="type-field-label">{debugMode ? '本会话统计' : '本阶段统计'}</p>
           <Metric label="匹配" value={String(sessionMatchedCount)} />
           <Metric label="需复查" value={String(sessionNeedsReviewCount)} />
-          <Metric label="失败" value={String(sessionFailedCount)} />
+          {debugMode ? <Metric label="失败" value={String(sessionFailedCount)} /> : null}
         </div>
 
         {finalReport ? (
           <div className="metric-stack space-y-3 rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] p-2.5">
-            <p className="type-field-label">整文件报告</p>
+            <p className="type-field-label">{debugMode ? '整文件报告' : '整文件摘要'}</p>
             <Metric
               label="已匹配"
               value={`${finalReport.matchedSubtitleCount} / ${finalReport.totalSubtitleCount}`}
             />
             <Metric label="需复查" value={String(finalReport.needsReviewCount)} />
             <Metric label="未匹配" value={String(finalReport.unmatchedCount)} />
-            <Metric label="未用英文段" value={String(finalReport.unusedEnglishSegmentIds.length)} />
-            <Metric label="重复 segment" value={String(finalReport.duplicateSegmentIds.length)} />
+            {debugMode ? (
+              <>
+                <Metric label="未用英文段" value={String(finalReport.unusedEnglishSegmentIds.length)} />
+                <Metric label="重复 segment" value={String(finalReport.duplicateSegmentIds.length)} />
+              </>
+            ) : null}
           </div>
         ) : null}
 
-        <div className="metric-stack space-y-3">
-          <p className="type-field-label">字幕全局</p>
-          <Metric label="已填英文" value={`${matchedLines} / ${subtitles.length}`} />
-          <Metric label="低置信度" value={String(lowConfidenceLines)} />
-          <Metric label="待复查行" value={String(attentionLines)} />
-        </div>
+        {debugMode ? (
+          <div className="metric-stack space-y-3">
+            <p className="type-field-label">字幕全局</p>
+            <Metric label="已填英文" value={`${matchedLines} / ${subtitles.length}`} />
+            <Metric label="低置信度" value={String(lowConfidenceLines)} />
+            <Metric label="待复查行" value={String(attentionLines)} />
+          </div>
+        ) : (
+          <div className="rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] p-2.5 text-[12px] text-secondary">
+            <span className="text-meta">已填英文 </span>
+            <span className="font-semibold text-primary tabular-nums">
+              {matchedLines}/{subtitles.length}
+            </span>
+            <span className="mx-2 text-meta">·</span>
+            <span className="text-meta">待复查 </span>
+            <span className="font-semibold text-primary tabular-nums">{attentionLines}</span>
+          </div>
+        )}
 
       </div>
     </aside>
@@ -1020,6 +1053,8 @@ function SettingsContent({
   onUpdate: (patch: Partial<SettingsState>) => void
 }): JSX.Element {
   const [deepSeekTest, setDeepSeekTest] = useState<DeepSeekTestUiState>({ phase: 'idle' })
+  const debugMode = useUiSettingsStore((s) => s.debugMode)
+  const setDebugMode = useUiSettingsStore((s) => s.setDebugMode)
 
   async function handleTestDeepSeekConnection(): Promise<void> {
     const bridge = window.bilingualSubtitleAligner
@@ -1179,6 +1214,18 @@ function SettingsContent({
             onChange={() => onUpdate({ separateLines: !settings.separateLines })}
           />
         </div>
+      </section>
+
+      <section className="settings-section">
+        <h3 className="settings-heading">界面与调试</h3>
+        <Toggle
+          checked={debugMode}
+          label="开发者模式（span / Raw / 校验详情）"
+          onChange={() => setDebugMode(!debugMode)}
+        />
+        <p className="type-caption mt-2 text-secondary leading-relaxed">
+          默认关闭：对齐面板仅显示本批字幕、模型英文与操作按钮。开启后显示时间窗、解析警告、候选组与原始响应等内部诊断信息。
+        </p>
       </section>
 
       <section className="settings-section">

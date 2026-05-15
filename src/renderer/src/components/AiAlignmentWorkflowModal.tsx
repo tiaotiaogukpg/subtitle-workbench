@@ -8,6 +8,7 @@ import {
 } from '../store/alignmentSessionStore'
 import { useScriptPoolStore } from '../store/scriptPoolStore'
 import { useSubtitleStore } from '../store/subtitleStore'
+import { useUiSettingsStore } from '../store/uiSettingsStore'
 import type { AiAlignmentRunConfig, SettingsState } from '../types'
 
 function clampInt(value: number, min: number, max: number): number {
@@ -34,6 +35,7 @@ export function AiAlignmentWorkflowModal({
   onStartAlignment: (config: AiAlignmentRunConfig) => string | null
 }): JSX.Element {
   const panelRef = useRef<HTMLDivElement>(null)
+  const debugMode = useUiSettingsStore((s) => s.debugMode)
   const subtitles = useSubtitleStore((s) => s.subtitles)
   const segments = useScriptPoolStore((s) => s.segments)
 
@@ -179,8 +181,7 @@ export function AiAlignmentWorkflowModal({
         <div className="modal-body-scroll min-h-0 flex-1 overflow-y-auto">
           <div className="modal-section-stack">
             <p className="text-secondary text-[13px] leading-snug">
-              导入中文 SRT 与英文原稿后，点击「运行整文件 AI 对齐」即可自动顺序处理全部字幕并写入结果。进度在右侧
-              Alignment Panel 实时查看。
+              导入中文 SRT 与英文原稿后，运行整文件对齐即可顺序处理全部字幕。进度与每批摘要在主窗口右侧「对齐」面板查看。
             </p>
 
             {sessionActive ? (
@@ -275,10 +276,16 @@ export function AiAlignmentWorkflowModal({
                   <span className="text-meta">字幕总数 · </span>
                   {subtitles.length}
                 </p>
-                <p className="text-meta">
-                  AI Ready: {aiReady ? '是' : '否'} · 纯英文池 {engPoolSize} 段
-                </p>
-                {prereqError ? (
+                {debugMode ? (
+                  <>
+                    <p className="text-meta">
+                      AI Ready: {aiReady ? '是' : '否'} · 纯英文池 {engPoolSize} 段
+                    </p>
+                    {prereqError ? (
+                      <p className="type-caption mt-2 text-amber-700 dark:text-amber-300">{prereqError}</p>
+                    ) : null}
+                  </>
+                ) : prereqError ? (
                   <p className="type-caption mt-2 text-amber-700 dark:text-amber-300">{prereqError}</p>
                 ) : null}
               </div>
@@ -301,21 +308,29 @@ export function AiAlignmentWorkflowModal({
             </section>
 
             <section className="settings-section">
-              <h3 className="settings-heading">Alignment Report</h3>
+              <h3 className="settings-heading">{debugMode ? 'Alignment Report' : '对齐结果摘要'}</h3>
               {finalReport ? (
-                <ul className="type-caption space-y-1 text-secondary">
-                  <li>字幕总数: {finalReport.totalSubtitleCount}</li>
-                  <li>已匹配（有英文）: {finalReport.matchedSubtitleCount}</li>
-                  <li>需复查: {finalReport.needsReviewCount}</li>
-                  <li>未匹配: {finalReport.unmatchedCount}</li>
-                  <li>低置信度: {finalReport.lowConfidenceCount}</li>
-                  <li>未使用英文段: {finalReport.unusedEnglishSegmentIds.length}</li>
-                  <li>重复 segment: {finalReport.duplicateSegmentIds.length}</li>
-                </ul>
+                debugMode ? (
+                  <ul className="type-caption space-y-1 text-secondary">
+                    <li>字幕总数: {finalReport.totalSubtitleCount}</li>
+                    <li>已匹配（有英文）: {finalReport.matchedSubtitleCount}</li>
+                    <li>需复查: {finalReport.needsReviewCount}</li>
+                    <li>未匹配: {finalReport.unmatchedCount}</li>
+                    <li>低置信度: {finalReport.lowConfidenceCount}</li>
+                    <li>未使用英文段: {finalReport.unusedEnglishSegmentIds.length}</li>
+                    <li>重复 segment: {finalReport.duplicateSegmentIds.length}</li>
+                  </ul>
+                ) : (
+                  <ul className="type-caption space-y-1 text-secondary">
+                    <li>已匹配 {finalReport.matchedSubtitleCount} / {finalReport.totalSubtitleCount} 行</li>
+                    <li>需复查 {finalReport.needsReviewCount} 行</li>
+                    <li>未匹配 {finalReport.unmatchedCount} 行</li>
+                  </ul>
+                )
               ) : sessionStatus === 'running' ? (
-                <p className="type-caption text-meta">整文件对齐完成后自动生成报告。</p>
+                <p className="type-caption text-meta">整文件对齐完成后显示摘要。</p>
               ) : (
-                <p className="type-caption text-meta">完成整文件对齐后在此显示汇总报告。</p>
+                <p className="type-caption text-meta">完成整文件对齐后在此查看结果概要。</p>
               )}
             </section>
 
