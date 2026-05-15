@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { downloadBilingualSrt } from './lib/srtExporter'
 import { parseSrt } from './lib/srtParser'
 import { parseMixedTranscript } from './lib/mixedTranscriptParser'
+import { parseEnglishSemanticClauses } from './lib/transcript/semanticClauseParser'
 import { EnglishScriptPoolPanel } from './components/EnglishScriptPoolPanel'
 import { AiAlignmentWorkflowModal } from './components/AiAlignmentWorkflowModal'
 import { AlignmentDriftRecoveryPanel } from './components/AlignmentDriftRecoveryPanel'
@@ -240,6 +241,21 @@ function App(): JSX.Element {
     try {
       const raw = await file.text()
       const segments = parseMixedTranscript(raw)
+      if (import.meta.env.DEV) {
+        for (const seg of segments) {
+          if (seg.language !== 'english') continue
+          const clauses = parseEnglishSemanticClauses(seg.text)
+          console.debug('[semantic-clauses]', {
+            sourceLine: seg.sourceLine,
+            source: seg.text,
+            clauses: clauses.map((c) => ({
+              text: c.text,
+              splitReason: c.splitReason,
+              wordCount: c.wordCount
+            }))
+          })
+        }
+      }
       useScriptPoolStore.getState().setSegments(segments)
       if (segments.length === 0) {
         window.alert('文件内容为空，或未切分出任何句子。')
