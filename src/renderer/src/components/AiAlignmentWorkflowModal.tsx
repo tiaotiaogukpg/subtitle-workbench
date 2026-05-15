@@ -406,6 +406,12 @@ export function AiAlignmentWorkflowModal({
                   <li>可应用: {lastReport.matchedSubtitleCount}</li>
                   <li>低置信度: {lastReport.lowConfidenceCount}</li>
                   <li>需复查: {lastReport.needsReviewCount}</li>
+                  <li>顺序补齐: {lastReport.sequentialFallbackCount}</li>
+                  {lastReport.alignmentDrift ? (
+                    <li className="text-amber-700 dark:text-amber-300">
+                      alignment drift: {lastReport.alignmentDriftReasons.join(' · ')}
+                    </li>
+                  ) : null}
                 </ul>
               ) : (
                 <p className="type-caption text-meta">完成整文件对齐后在此显示汇总报告。</p>

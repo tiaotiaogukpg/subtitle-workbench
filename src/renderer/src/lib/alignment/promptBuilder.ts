@@ -6,43 +6,41 @@ export function estimatePromptTokens(text: string): number {
   return Math.max(1, Math.ceil(text.length / 4))
 }
 
-const SYSTEM_PROMPT = `You are a bilingual subtitle alignment engine.
+const SYSTEM_PROMPT = `You are a bilingual subtitle alignment engine for consecutive interview subtitles.
 
-Batch context:
-The subtitles in this batch are consecutive.
-They may correspond to one continuous English answer block.
-Do not match each subtitle independently.
-Understand the whole batch first, then assign consecutive English candidate groups to each subtitle.
+Critical batch model:
+- The subtitles in this batch are ONE continuous Chinese discourse span (e.g. #006–#011).
+- They usually map to ONE continuous English answer flow in localEnglishContextBlock — not one isolated English sentence per Chinese line.
+- Read the entire batch and the full local English context BEFORE assigning any groupId.
+- Do NOT treat each subtitle as an independent search task.
 
-Task: Match each Chinese subtitle line to exactly ONE English candidate GROUP from "englishCandidateGroups".
+Workflow:
+1. Read all Chinese lines in order and infer the shared English answer flow.
+2. Read localEnglishContextBlock (if present) as the likely continuous English source.
+3. Assign englishCandidateGroups in ascending pool segment order across the batch.
+4. Typical pattern: subtitle #006 → seg20–21, #007 → seg22, #008 → seg23 (forward, no large jumps).
+
+Task: Match each Chinese subtitle to exactly ONE group from "englishCandidateGroups".
 
 Rules:
-1. Process subtitles in ascending orderIndex order (subtitle order is fixed).
-2. You MUST return exactly one match row per subtitle in the batch — every subtitleId listed must appear in "matches".
-3. Each script segment id may be used at most once across all subtitles in this batch.
-4. You MUST choose by groupId from "englishCandidateGroups". Each group has fixed segmentIds and canonical "text".
-5. In each match row: "groupId" must be one of the provided group ids. "matchedSegmentIds" MUST match that group's segmentIds in order. "english" MUST copy the group's text (whitespace may be normalized to single spaces).
-6. Do NOT invent segment ids or group ids. Do NOT paraphrase the English.
-7. confidence is a number between 0 and 1.
-8. reason is a short English explanation.
+1. Process subtitles in ascending orderIndex order.
+2. Return exactly one match row per subtitleId in the batch — no skips, no empty english.
+3. Each script segment id may be used at most once in this batch.
+4. Pick only groupId from "englishCandidateGroups"; matchedSegmentIds and english must match that group exactly.
+5. Do NOT invent ids or paraphrase English.
+6. confidence is 0–1; reason is a short English explanation.
 
-Assignment discipline:
-- For every subtitle, return one match.
-- The selected groups should usually move forward in order.
-- Do not skip subtitles.
-- Do not jump far ahead.
-- Do not reuse the same segment unless necessary.
+Sequential discipline:
+- Segment indices should move forward: startIndex of each row should be near the previous row's endIndex.
+- No large jumps (e.g. #006 → pool[20], #007 → pool[88] is wrong).
+- No backward reuse of earlier segments.
+- If uncertain, still return the best plausible next group with lower confidence — never omit a subtitle.
 
 Local English context:
-- "localEnglishContextBlock" (if present) is read-only background showing the likely continuous English answer near the cursor.
-- You MUST still pick groupId only from "englishCandidateGroups".
-- Do NOT select segments outside the candidate groups list.
+- localEnglishContextBlock is read-only background for the continuous answer flow.
+- You MUST still choose groupId only from englishCandidateGroups.
 
-English-only constraints:
-- Do not use Chinese or CJK in the "english" field.
-- Only use groups from englishCandidateGroups.
-
-Output: Return JSON only (no markdown, no code fences). Shape:
+Output: JSON only. Shape:
 {"matches":[{"subtitleId":7,"groupId":"g_10_12","matchedSegmentIds":["seg_10","seg_11"],"english":"...","confidence":0.91,"reason":"..."}]}`
 
 export interface BatchAlignmentPromptInput {
@@ -53,7 +51,17 @@ export interface BatchAlignmentPromptInput {
 
 export function buildBatchAlignmentUserPayload(input: BatchAlignmentPromptInput): string {
   const { subtitles, candidateGroups, localEnglishContext } = input
+  const subtitleIds = subtitles.map((s) => s.subtitleId)
   const payload: Record<string, unknown> = {
+    batchSpan: {
+      subtitleIds,
+      isConsecutiveDiscourse: true,
+      workflow: [
+        'Treat all subtitleIds as one continuous Chinese span.',
+        'Map them to one continuous English answer flow (see localEnglishContextBlock).',
+        'Assign candidate groups in forward segment order; do not match lines in isolation.'
+      ]
+    },
     subtitles,
     englishCandidateGroups: candidateGroups.map((g) => ({
       groupId: g.id,
@@ -70,6 +78,10 @@ export function buildBatchAlignmentUserPayload(input: BatchAlignmentPromptInput)
       ordering: 'subtitles_fixed_order',
       oneMatchPerSubtitle: true,
       batchIsConsecutive: true,
+      batchIsContinuousSemanticSpan: true,
+      sequentialSegmentOrder: 'forward_only',
+      maxForwardGapSegments: 3,
+      noEmptyEnglish: true,
       localContextIsReadOnly: true,
       selectionMustUseCandidateGroups: true
     }

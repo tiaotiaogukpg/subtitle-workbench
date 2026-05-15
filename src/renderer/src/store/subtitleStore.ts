@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import {
   confidenceToPercent,
+  mergeAlignmentProblems,
   statusFromConfidencePct,
   type AlignmentMatchRow
 } from '../lib/alignment'
@@ -24,6 +25,24 @@ export interface SubtitleStoreActions {
   removeProblem: (id: number, problem: string) => void
   /** 将预览中的 AI 对齐结果写入字幕（含 candidates）；不修改未出现在 rows 中的行。 */
   applyDeepSeekPreviewMatches: (rows: AlignmentMatchRow[]) => void
+  /** 整文件对齐：写入 AI 英文 + 状态 + 可读 problems + 候选（含 source）。 */
+  applyFullFileAIMatchBatch: (
+    entries: Array<{
+      subtitleId: number
+      primary: AlignmentMatchRow
+      status: SubtitleStatus
+      problems: string[]
+      candidates: CandidateMatch[]
+    }>
+  ) => void
+  /** 标记需复查：不修改 english，可写入 candidates / problems。 */
+  applyAlignmentReviewStates: (
+    entries: Array<{
+      subtitleId: number
+      candidates?: CandidateMatch[]
+      problems: string[]
+    }>
+  ) => void
 }
 
 export type SubtitleStore = SubtitleStoreState & SubtitleStoreActions
@@ -117,7 +136,8 @@ export const useSubtitleStore = create<SubtitleStore>((set, get) => ({
           segmentIds: [...m.matchedSegmentIds],
           text: m.english.trim(),
           confidence: confidenceToPercent(m.confidence),
-          groupId: m.groupId
+          groupId: m.groupId,
+          source: 'ai' as const
         }))
         const topPct = candidates[0]?.confidence ?? confidenceToPercent(primary.confidence)
         const status: SubtitleStatus = statusFromConfidencePct(topPct)
@@ -137,6 +157,49 @@ export const useSubtitleStore = create<SubtitleStore>((set, get) => ({
       }
       return { subtitles }
     })
+  },
+
+  applyFullFileAIMatchBatch: (entries) => {
+    if (entries.length === 0) return
+    const validSeg = new Set(useScriptPoolStore.getState().segments.map((seg) => seg.id))
+    const byId = new Map(entries.map((e) => [e.subtitleId, e]))
+    set((s) => ({
+      subtitles: s.subtitles.map((line) => {
+        const entry = byId.get(line.id)
+        if (!entry) return line
+        const primary = entry.primary
+        const filteredIds = primary.matchedSegmentIds.filter((id) => validSeg.has(id))
+        const topPct = confidenceToPercent(primary.confidence)
+        return {
+          ...line,
+          english: primary.english.trim(),
+          matchedSegmentIds: filteredIds,
+          confidence: topPct,
+          status: entry.status,
+          candidates: entry.candidates,
+          problems: mergeAlignmentProblems(line.problems, entry.problems),
+          manuallyEdited: false
+        }
+      })
+    }))
+  },
+
+  applyAlignmentReviewStates: (entries) => {
+    if (entries.length === 0) return
+    const byId = new Map(entries.map((e) => [e.subtitleId, e]))
+    set((s) => ({
+      subtitles: s.subtitles.map((line) => {
+        const entry = byId.get(line.id)
+        if (!entry) return line
+        return {
+          ...line,
+          confidence: 0,
+          status: 'needs_review' as SubtitleStatus,
+          candidates: entry.candidates?.length ? entry.candidates : line.candidates,
+          problems: mergeAlignmentProblems(line.problems, entry.problems)
+        }
+      })
+    }))
   }
 }))
 

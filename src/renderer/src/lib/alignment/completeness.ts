@@ -1,5 +1,7 @@
+import { ALIGNMENT_USER_READABLE_MESSAGES } from './applyPolicy'
 import type { CandidateSegmentGroup, ScriptSegment, SubtitleLine } from '../../types'
 import { filterEnglishPoolSegments } from './englishPool'
+import type { AlignmentDriftResult } from './sequentialAlignment'
 import type { AlignmentMatchValidated } from './types'
 
 /** 整文件对齐完成后的汇总报告。 */
@@ -26,6 +28,9 @@ export interface AlignmentReport {
   lowConfidenceCount: number
   /** 缺失 + 无效，需人工复查。 */
   needsReviewCount: number
+  alignmentDrift: boolean
+  alignmentDriftReasons: string[]
+  sequentialFallbackCount: number
 }
 
 export function checkSubtitleCompleteness(
@@ -61,7 +66,7 @@ export function buildAlignmentReport(
   expectedSubtitleIds: number[],
   validated: AlignmentMatchValidated[],
   candidateGroups: CandidateSegmentGroup[],
-  options?: { confidenceThresholdPct?: number }
+  options?: { confidenceThresholdPct?: number; drift?: AlignmentDriftResult }
 ): AlignmentReport {
   const { missingSubtitleIds } = checkSubtitleCompleteness(expectedSubtitleIds, validated)
   const { duplicateSegmentIds, unusedSegmentIdsInWindow } = checkEnglishSegmentUsage(
@@ -80,6 +85,9 @@ export function buildAlignmentReport(
     return pct < threshold
   }).length
   const needsReviewCount = missingSubtitleIds.length + invalidResultCount
+  const sequentialFallbackCount = validated.filter((v) =>
+    v.validationFlags.includes('sequential_fallback')
+  ).length
 
   return {
     batchSubtitleCount: expectedSubtitleIds.length,
@@ -90,7 +98,10 @@ export function buildAlignmentReport(
     validationWarningCount,
     invalidResultCount,
     lowConfidenceCount,
-    needsReviewCount
+    needsReviewCount,
+    alignmentDrift: options?.drift?.drift ?? false,
+    alignmentDriftReasons: options?.drift?.reasons ?? [],
+    sequentialFallbackCount
   }
 }
 
@@ -111,8 +122,9 @@ export function buildFullFileAlignmentReport(input: {
     if (line.status === 'unmatched') unmatchedCount++
     if (line.status === 'low_confidence') lowConfidenceCount++
     if (
-      line.problems.some((p) => p.startsWith('ai_alignment:')) ||
-      (line.status === 'low_confidence' && hasEnglish)
+      line.status === 'needs_review' ||
+      line.status === 'low_confidence' ||
+      line.problems.some((p) => p.startsWith('ai_alignment:') || ALIGNMENT_USER_READABLE_MESSAGES.has(p))
     ) {
       needsReviewCount++
     }

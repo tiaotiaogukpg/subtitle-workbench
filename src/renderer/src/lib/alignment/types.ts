@@ -22,6 +22,11 @@ export type AlignmentMatchValidationFlag =
   | 'invalid_group_id'
   | 'english_not_from_group'
   | 'missing_subtitle'
+  | 'empty_english'
+  | 'segment_jump'
+  | 'segment_backward'
+  | 'sequential_fallback'
+  | 'alignment_drift'
 
 export interface AlignmentMatchValidated extends AlignmentMatchRow {
   validationFlags: AlignmentMatchValidationFlag[]

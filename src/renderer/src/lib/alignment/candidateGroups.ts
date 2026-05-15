@@ -30,6 +30,18 @@ export function candidateGroupsById(groups: CandidateSegmentGroup[]): Map<string
   return new Map(groups.map((g) => [g.id, g]))
 }
 
+/** 与 `buildCandidateGroups` 一致的英文池下标窗口 [windowStart, windowEnd]（含端点）。 */
+export function getEnglishPoolWindowBounds(
+  poolLength: number,
+  cursor: number,
+  windowSize: number
+): { windowStart: number; windowEnd: number } {
+  if (poolLength <= 0) return { windowStart: 0, windowEnd: 0 }
+  const windowStart = Math.min(Math.max(0, cursor), poolLength - 1)
+  const windowEnd = Math.min(poolLength - 1, cursor + windowSize - 1)
+  return { windowStart, windowEnd }
+}
+
 export function buildCandidateGroups(options: BuildCandidateGroupsOptions): CandidateSegmentGroup[] {
   const {
     englishSegments: pool,

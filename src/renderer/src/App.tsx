@@ -9,6 +9,7 @@ import { VerticalStackSplitter } from './components/VerticalStackSplitter'
 import { useHistoryStore } from './store/historyStore'
 import { useScriptPoolStore } from './store/scriptPoolStore'
 import { startAlignmentSession } from './lib/alignment'
+import { formatProblemForDisplay } from './lib/alignment/applyPolicy'
 import {
   isAlignmentSessionActive,
   useAlignmentSessionStore
@@ -32,6 +33,11 @@ const statusMeta: Record<
   },
   low_confidence: {
     label: 'Low Confidence',
+    badgeClass: 'status-badge status-badge--low',
+    dotClass: 'status-dot status-dot--low'
+  },
+  needs_review: {
+    label: 'Needs Review',
     badgeClass: 'status-badge status-badge--low',
     dotClass: 'status-dot status-dot--low'
   },
@@ -668,8 +674,11 @@ function AlignmentStatus({ settings }: { settings: SettingsState }): JSX.Element
 
   const matchedLines = subtitles.filter((l) => l.english.trim().length > 0).length
   const lowConfidenceLines = subtitles.filter((l) => l.status === 'low_confidence').length
-  const needsReviewLines = subtitles.filter(
-    (l) => l.status === 'low_confidence' || l.problems.length > 0
+  const attentionLines = subtitles.filter(
+    (l) =>
+      l.status === 'needs_review' ||
+      l.status === 'low_confidence' ||
+      l.problems.length > 0
   ).length
 
   const modeLabel =
@@ -755,7 +764,7 @@ function AlignmentStatus({ settings }: { settings: SettingsState }): JSX.Element
           <p className="type-field-label">字幕全局</p>
           <Metric label="已填英文" value={`${matchedLines} / ${subtitles.length}`} />
           <Metric label="低置信度" value={String(lowConfidenceLines)} />
-          <Metric label="待复查行" value={String(needsReviewLines)} />
+          <Metric label="待复查行" value={String(attentionLines)} />
         </div>
 
       </div>
@@ -885,7 +894,7 @@ function TimelineSimulator({
 }
 
 function ProblemItem({ label }: { label: string }): JSX.Element {
-  return <p className="problem-item">▲ {label}</p>
+  return <p className="problem-item">▲ {formatProblemForDisplay(label)}</p>
 }
 
 function SettingsModal({

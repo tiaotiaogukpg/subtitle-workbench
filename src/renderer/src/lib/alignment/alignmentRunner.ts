@@ -1,8 +1,13 @@
 import {
   advanceEnglishCursor,
+  buildCandidatesForSubtitle,
   buildFullFileAlignmentReport,
-  confidenceToPercent,
+  DEFAULT_GROUP_WINDOW,
+  deriveStatusAfterAI,
+  MAX_ENGLISH_CURSOR_ADVANCE_SEGMENTS,
   filterEnglishPoolSegments,
+  pickBestStructuralAIForSubtitle,
+  readableProblemsForAIRow,
   runSmallBatchAlignment,
   validateAlignmentPrerequisites,
   type AlignmentMatchValidated
@@ -12,24 +17,37 @@ import { useAlignmentPreviewStore } from '../../store/alignmentPreviewStore'
 import { useAlignmentSessionStore } from '../../store/alignmentSessionStore'
 import { useScriptPoolStore } from '../../store/scriptPoolStore'
 import { useSubtitleStore } from '../../store/subtitleStore'
-import type { AiAlignmentRunConfig } from '../../types'
+import type { AiAlignmentRunConfig, CandidateSegmentGroup, SubtitleStatus } from '../../types'
 
 let runGeneration = 0
 
 function countBatchStats(
+  batchSubtitleIds: number[],
   validated: AlignmentMatchValidated[],
-  thresholdPct: number
+  thresholdPct: number,
+  candidateGroups: CandidateSegmentGroup[],
+  cursor: number,
+  poolLength: number
 ): { matched: number; needsReview: number; failed: number } {
   let matched = 0
   let needsReview = 0
   let failed = 0
-  for (const v of validated) {
-    if (!v.applyable) {
+  for (const subtitleId of batchSubtitleIds) {
+    const best = pickBestStructuralAIForSubtitle(
+      validated,
+      subtitleId,
+      candidateGroups,
+      cursor,
+      poolLength,
+      DEFAULT_GROUP_WINDOW
+    )
+    if (!best) {
       failed++
       continue
     }
     matched++
-    if (confidenceToPercent(v.confidence) < thresholdPct) needsReview++
+    const st = deriveStatusAfterAI(best, thresholdPct)
+    if (st !== 'confirmed') needsReview++
   }
   return { matched, needsReview, failed }
 }
@@ -37,32 +55,80 @@ function countBatchStats(
 function applyFullFileBatchResults(
   batchSubtitleIds: number[],
   validated: AlignmentMatchValidated[],
-  applyable: import('./types').AlignmentMatchRow[],
-  thresholdPct: number
-): void {
+  thresholdPct: number,
+  candidateGroups: CandidateSegmentGroup[],
+  englishCursor: number,
+  poolLength: number
+): import('./types').AlignmentMatchRow[] {
   const subtitleStore = useSubtitleStore.getState()
-  if (applyable.length > 0) {
-    subtitleStore.applyDeepSeekPreviewMatches(applyable)
-  }
-  const matchedIds = new Set(applyable.map((m) => m.subtitleId))
+  const aiEntries: Array<{
+    subtitleId: number
+    primary: import('./types').AlignmentMatchRow
+    status: SubtitleStatus
+    problems: string[]
+    candidates: import('../../types').CandidateMatch[]
+  }> = []
+  const fallbackOnly: Array<{
+    subtitleId: number
+    candidates?: import('../../types').CandidateMatch[]
+    problems: string[]
+  }> = []
 
-  for (const v of validated) {
-    if (v.applyable) {
-      if (confidenceToPercent(v.confidence) < thresholdPct) {
-        subtitleStore.addProblem(v.subtitleId, 'ai_alignment:low_confidence')
+  for (const subtitleId of batchSubtitleIds) {
+    const rowsForSub = validated.filter((v) => v.subtitleId === subtitleId)
+    const best = pickBestStructuralAIForSubtitle(
+      validated,
+      subtitleId,
+      candidateGroups,
+      englishCursor,
+      poolLength,
+      DEFAULT_GROUP_WINDOW
+    )
+
+    if (best) {
+      const { validationFlags: _v, applyable: _a, ...row } = best
+      const status = deriveStatusAfterAI(best, thresholdPct)
+      let problems = readableProblemsForAIRow(best, thresholdPct)
+      if (status === 'needs_review' && problems.length === 0) {
+        problems = [...problems, 'This line needs manual review.']
       }
-      continue
+      const candidates = buildCandidatesForSubtitle(
+        rowsForSub,
+        best,
+        candidateGroups,
+        englishCursor,
+        poolLength,
+        DEFAULT_GROUP_WINDOW
+      )
+      aiEntries.push({ subtitleId, primary: row, status, problems, candidates })
+    } else {
+      fallbackOnly.push({
+        subtitleId,
+        candidates: buildCandidatesForSubtitle(
+          rowsForSub,
+          null,
+          candidateGroups,
+          englishCursor,
+          poolLength,
+          DEFAULT_GROUP_WINDOW
+        ),
+        problems: ['AI did not return a reliable match.']
+      })
     }
-    subtitleStore.addProblem(v.subtitleId, 'ai_alignment:needs_review')
-    subtitleStore.updateStatus(v.subtitleId, 'unmatched')
   }
 
-  for (const id of batchSubtitleIds) {
-    if (!matchedIds.has(id)) {
-      subtitleStore.updateStatus(id, 'unmatched')
-      subtitleStore.addProblem(id, 'ai_alignment:unmatched')
+  if (aiEntries.length > 0) {
+    subtitleStore.applyFullFileAIMatchBatch(aiEntries)
+  }
+  if (fallbackOnly.length > 0) {
+    const skip = new Set(aiEntries.map((e) => e.subtitleId))
+    const onlyFallback = fallbackOnly.filter((f) => !skip.has(f.subtitleId))
+    if (onlyFallback.length > 0) {
+      subtitleStore.applyAlignmentReviewStates(onlyFallback)
     }
   }
+
+  return aiEntries.map((e) => e.primary)
 }
 
 function trackSegmentUsage(
@@ -127,7 +193,14 @@ async function runSingleBatchTest(
     result.batch.length > 0
       ? `#${result.batch[0]!.id}–#${result.batch[result.batch.length - 1]!.id}`
       : '—'
-  const stats = countBatchStats(result.validated, config.confidenceThreshold)
+  const stats = countBatchStats(
+    result.batchSubtitleIds,
+    result.validated,
+    config.confidenceThreshold,
+    result.candidateGroups,
+    result.debug.englishCursor,
+    result.debug.englishPoolSize
+  )
 
   useAlignmentPreviewStore.getState().setSuccess({
     validated: result.validated,
@@ -170,6 +243,7 @@ async function runFullFileAlignment(
   let subtitleStart = 0
   let batchIndex = 0
   const segmentUsage = new Map<string, number>()
+  const usedSegmentIdsGlobal = new Set<string>()
 
   while (subtitleStart < subtitles.length) {
     if (generation !== runGeneration) return
@@ -205,7 +279,8 @@ async function runFullFileAlignment(
       englishCursor,
       model: config.model,
       batchSize: batch.length,
-      confidenceThresholdPct: config.confidenceThreshold
+      confidenceThresholdPct: config.confidenceThreshold,
+      usedSegmentIdsGlobal
     })
 
     if (generation !== runGeneration) return
@@ -216,29 +291,64 @@ async function runFullFileAlignment(
       return
     }
 
-    applyFullFileBatchResults(
+    const poolLen = filterEnglishPoolSegments(segments).length
+
+    if (result.report.alignmentDrift) {
+      useAlignmentPreviewStore.getState().setSuccess({
+        validated: result.validated,
+        applyable: result.applyable,
+        candidateGroups: result.candidateGroups,
+        batchSubtitleIds: result.batchSubtitleIds,
+        segmentIdsInContext: [...new Set(result.candidateGroups.flatMap((g) => g.segmentIds))],
+        report: result.report,
+        debug: result.debug
+      })
+      session.failSession(
+        '整文件对齐已暂停：本批检测到 alignment drift。请检查 English cursor、字幕与英文池对应关系后重试。'
+      )
+      return
+    }
+
+    const applied = applyFullFileBatchResults(
       result.batchSubtitleIds,
       result.validated,
-      result.applyable,
-      config.confidenceThreshold
+      config.confidenceThreshold,
+      result.candidateGroups,
+      result.debug.englishCursor,
+      poolLen
     )
-    trackSegmentUsage(segmentUsage, result.applyable)
+    trackSegmentUsage(segmentUsage, applied)
 
     const ids = new Set<string>()
-    for (const m of result.applyable) {
-      for (const id of m.matchedSegmentIds) ids.add(id)
+    for (const m of applied) {
+      for (const id of m.matchedSegmentIds) {
+        ids.add(id)
+        usedSegmentIdsGlobal.add(id)
+      }
     }
     useScriptPoolStore.getState().markSegmentsUsedForAlignment([...ids])
 
+    const maxAdvance = Math.min(
+      MAX_ENGLISH_CURSOR_ADVANCE_SEGMENTS,
+      Math.max(6, batch.length * 2 + 4)
+    )
     englishCursor = advanceEnglishCursor({
       previousCursor: englishCursor,
-      acceptedMatches: result.applyable,
+      acceptedMatches: applied,
       candidateGroups: result.candidateGroups,
-      poolLength: filterEnglishPoolSegments(segments).length
+      poolLength: poolLen,
+      maxAdvanceSegments: maxAdvance
     })
     useAlignmentPreviewStore.getState().setEnglishCursor(englishCursor)
 
-    const stats = countBatchStats(result.validated, config.confidenceThreshold)
+    const stats = countBatchStats(
+      result.batchSubtitleIds,
+      result.validated,
+      config.confidenceThreshold,
+      result.candidateGroups,
+      result.debug.englishCursor,
+      poolLen
+    )
 
     useAlignmentPreviewStore.getState().setSuccess({
       validated: result.validated,

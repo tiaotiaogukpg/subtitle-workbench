@@ -1,4 +1,5 @@
 import type { CandidateSegmentGroup } from '../../types'
+import { MAX_ENGLISH_CURSOR_ADVANCE_SEGMENTS } from './constants'
 import type { AlignmentMatchRow } from './types'
 
 export interface AdvanceEnglishCursorInput {
@@ -6,9 +7,11 @@ export interface AdvanceEnglishCursorInput {
   acceptedMatches: AlignmentMatchRow[]
   candidateGroups: CandidateSegmentGroup[]
   poolLength: number
+  /** 单次最多从 previous 向前推进的池下标步长（整文件安全上限）。 */
+  maxAdvanceSegments?: number
 }
 
-/** 根据已接受匹配的组 endSegmentIndex 推进；无匹配时保持游标。 */
+/** 根据已接受匹配的组 endSegmentIndex 推进；无匹配时保持游标；并限制单次推进幅度。 */
 export function advanceEnglishCursor(input: AdvanceEnglishCursorInput): number {
   const { previousCursor, acceptedMatches, candidateGroups, poolLength } = input
   if (poolLength === 0) return 0
@@ -21,5 +24,7 @@ export function advanceEnglishCursor(input: AdvanceEnglishCursorInput): number {
     if (g) maxEnd = Math.max(maxEnd, g.endSegmentIndex)
   }
   if (maxEnd < 0) return clamped
-  return Math.min(poolLength, Math.max(clamped, maxEnd + 1))
+  const cap = input.maxAdvanceSegments ?? MAX_ENGLISH_CURSOR_ADVANCE_SEGMENTS
+  const next = Math.min(poolLength - 1, Math.max(clamped, maxEnd + 1))
+  return Math.min(next, clamped + cap)
 }

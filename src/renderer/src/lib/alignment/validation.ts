@@ -1,6 +1,7 @@
 import { containsChinese } from '../language'
 import type { CandidateSegmentGroup } from '../../types'
 import { englishMatchesGroupText } from './candidateGroups'
+import { computeMatchApplyable } from './sequentialAlignment'
 import type {
   AlignmentMatchRow,
   AlignmentMatchValidated,
@@ -35,7 +36,7 @@ function applyDuplicateFlags(
         const flags: AlignmentMatchValidationFlag[] = [
           ...new Set<AlignmentMatchValidationFlag>([...r.validationFlags, 'duplicate_segment'])
         ]
-        return { ...r, validationFlags: flags, applyable: flags.length === 0 }
+        return { ...r, validationFlags: flags, applyable: computeMatchApplyable(flags) }
       }
       return r
     })
@@ -51,7 +52,7 @@ function applyDuplicateFlags(
     const flags: AlignmentMatchValidationFlag[] = [
       ...new Set<AlignmentMatchValidationFlag>([...r.validationFlags, 'duplicate_segment'])
     ]
-    return { ...r, validationFlags: flags, applyable: flags.length === 0 }
+    return { ...r, validationFlags: flags, applyable: computeMatchApplyable(flags) }
   })
 }
 
@@ -75,7 +76,7 @@ export function validateAlignmentResult(input: ValidateAlignmentResultInput): Al
     if (m.matchedSegmentIds.length === 0) flags.push('invalid_segment_id')
     if (m.matchedSegmentIds.some((id) => !allowedIds.has(id))) flags.push('invalid_segment_id')
 
-    return { ...m, validationFlags: flags, applyable: flags.length === 0 }
+    return { ...m, validationFlags: flags, applyable: computeMatchApplyable(flags) }
   })
 
   const returnedIds = new Set(base.map((r) => r.subtitleId))

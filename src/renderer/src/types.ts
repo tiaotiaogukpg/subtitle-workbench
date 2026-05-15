@@ -1,9 +1,11 @@
-export type SubtitleStatus = 'confirmed' | 'low_confidence' | 'manual' | 'unmatched'
+export type SubtitleStatus = 'confirmed' | 'low_confidence' | 'manual' | 'unmatched' | 'needs_review'
 
 export interface CandidateMatch {
   id: string
   /** 该候选合并自哪些英文原稿片段（连续片段 id）。 */
   segmentIds: string[]
+  /** 对齐来源：DeepSeek 返回为 ai；程序顺序建议为 fallback（不自动写入 english）。 */
+  source?: 'ai' | 'fallback'
   /** `segmentIds` 对应片段文本以空格合并后的展示串。 */
   text: string
   confidence: number

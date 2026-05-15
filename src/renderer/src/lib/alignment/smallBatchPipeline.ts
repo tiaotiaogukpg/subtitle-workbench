@@ -12,8 +12,14 @@ import {
 } from './promptBuilder'
 import type { AlignmentMatchRow, AlignmentMatchValidated } from './types'
 import {
+  buildAlignmentBatchPipelineDiagnostics,
+  logAlignmentBatchPipelineDiagnostics,
+  type AlignmentBatchPipelineDiagnostics
+} from './alignmentDiagnostics'
+import { pickBestStructuralAIForSubtitle } from './applyPolicy'
+import { finalizeBatchAlignment } from './sequentialAlignment'
+import {
   buildValidationWarnings,
-  pickBestApplyablePerSubtitle,
   validateAlignmentResult
 } from './validation'
 import type { CandidateSegmentGroup } from '../../types'
@@ -30,6 +36,8 @@ export interface SmallBatchAlignmentDebug {
   englishCursor: number
   validationWarnings: string[]
   localContextLabel: string
+  /** 单批完整 pipeline 快照（与控制台 `[alignment-pipeline]` 一致）。 */
+  pipelineTrace?: AlignmentBatchPipelineDiagnostics | null
 }
 
 export interface SmallBatchAlignmentSuccess {
@@ -55,6 +63,8 @@ export interface RunSmallBatchAlignmentInput {
   model: string
   batchSize?: number
   confidenceThresholdPct?: number
+  /** 整文件模式下前序批次已占用的 segment，避免跨批重复。 */
+  usedSegmentIdsGlobal?: Set<string>
 }
 
 export async function runSmallBatchAlignment(
@@ -179,15 +189,36 @@ export async function runSmallBatchAlignment(
   }
 
   const batchSubtitleIds = batch.map((b) => b.id)
-  const validated = validateAlignmentResult({
+  const rawValidated = validateAlignmentResult({
     result: parsed.data.matches,
     candidateGroups,
-    expectedSubtitleIds: batchSubtitleIds
+    expectedSubtitleIds: batchSubtitleIds,
+    usedSegmentIdsGlobal: input.usedSegmentIdsGlobal
   })
-  const validationWarnings = buildValidationWarnings(validated)
+  const thresholdPct = input.confidenceThresholdPct ?? 60
+  const { validated, drift, repairedSubtitleIds } = finalizeBatchAlignment(
+    rawValidated,
+    batchSubtitleIds,
+    candidateGroups,
+    { usedSegmentIdsGlobal: input.usedSegmentIdsGlobal, englishCursor: cursor }
+  )
+  const validationWarnings = [
+    ...buildValidationWarnings(validated),
+    ...(drift.drift ? [`alignment_drift: ${drift.reasons.join('; ')}`] : []),
+    ...(repairedSubtitleIds.length > 0
+      ? [`sequential_fallback suggestions (not auto-applied): ${repairedSubtitleIds.join(', ')}`]
+      : [])
+  ]
   const applyable: AlignmentMatchRow[] = []
   for (const id of batchSubtitleIds) {
-    const best = pickBestApplyablePerSubtitle(validated, id)
+    const best = pickBestStructuralAIForSubtitle(
+      validated,
+      id,
+      candidateGroups,
+      cursor,
+      engPool.length,
+      DEFAULT_GROUP_WINDOW
+    )
     if (best) {
       const { validationFlags: _v, applyable: _a, ...row } = best
       applyable.push(row)
@@ -195,8 +226,24 @@ export async function runSmallBatchAlignment(
   }
 
   const report = buildAlignmentReport(batchSubtitleIds, validated, candidateGroups, {
-    confidenceThresholdPct: input.confidenceThresholdPct
+    confidenceThresholdPct: input.confidenceThresholdPct,
+    drift
   })
+
+  const pipelineTrace = buildAlignmentBatchPipelineDiagnostics({
+    batch,
+    engPool,
+    cursor,
+    windowSize: DEFAULT_GROUP_WINDOW,
+    localEnglishContext,
+    candidateGroups,
+    messages,
+    rawResponse: api.rawText,
+    validated,
+    batchSubtitleIds,
+    thresholdPct
+  })
+  logAlignmentBatchPipelineDiagnostics(pipelineTrace)
 
   return {
     ok: true,
@@ -217,7 +264,8 @@ export async function runSmallBatchAlignment(
       englishPoolSize: engPool.length,
       englishCursor: cursor,
       validationWarnings,
-      localContextLabel
+      localContextLabel,
+      pipelineTrace
     }
   }
 }
