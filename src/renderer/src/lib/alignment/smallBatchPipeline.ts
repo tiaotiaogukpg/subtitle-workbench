@@ -1,6 +1,7 @@
 import type { CandidateSegmentGroup, ScriptSegment, SubtitleLine } from '../../types'
 import { pickSmallBatchSubtitles } from './batchSelection'
 import { buildCandidateGroups } from './candidateGroups'
+import { enrichAlignmentMatchesFromLocalContext } from './contextEnrichment'
 import { buildAlignmentReport } from './completeness'
 import { DEFAULT_GROUP_WINDOW } from './constants'
 import { buildLocalEnglishContextBlock } from './englishBlock'
@@ -100,6 +101,19 @@ export async function runSmallBatchAlignment(
     chinese: l.chinese
   }))
 
+  if (!localEnglishContext) {
+    return {
+      ok: false,
+      error: '无法构建局部英文上下文（游标附近连续纯英文片段不足）。',
+      debug: {
+        promptPreview: '',
+        rawResponse: '',
+        validationResult: ['No localEnglishContextBlock.'],
+        localEnglishExcerpt
+      }
+    }
+  }
+
   const candidateGroups = buildCandidateGroups({
     englishSegments: engPool,
     cursor,
@@ -111,19 +125,6 @@ export async function runSmallBatchAlignment(
     candidateGroups,
     localEnglishContext
   })
-
-  if (candidateGroups.length === 0) {
-    return {
-      ok: false,
-      error: '当前游标窗口内无法组成英文候选组。',
-      debug: {
-        promptPreview,
-        rawResponse: '',
-        validationResult: ['No candidate groups in window.'],
-        localEnglishExcerpt
-      }
-    }
-  }
 
   const { messages } = buildBatchAlignmentPrompt({
     subtitles: promptSubs,
@@ -160,9 +161,11 @@ export async function runSmallBatchAlignment(
   }
 
   const batchSubtitleIds = batch.map((b) => b.id)
+  const enriched = enrichAlignmentMatchesFromLocalContext(parsed.data.matches, localEnglishContext, engPool)
   const rawValidated = validateAlignmentResult({
-    result: parsed.data.matches,
-    candidateGroups,
+    result: enriched,
+    localEnglishContext,
+    englishPool: engPool,
     expectedSubtitleIds: batchSubtitleIds,
     alignmentWindow: {
       englishCursor: cursor,
@@ -173,7 +176,7 @@ export async function runSmallBatchAlignment(
   const { validated, drift } = finalizeBatchAlignment(
     rawValidated,
     batchSubtitleIds,
-    candidateGroups,
+    localEnglishContext,
     {
       englishCursor: cursor,
       poolLength: engPool.length,
@@ -186,21 +189,14 @@ export async function runSmallBatchAlignment(
   ]
   const applyable: AlignmentMatchRow[] = []
   for (const id of batchSubtitleIds) {
-    const best = pickBestStructuralAIForSubtitle(
-      validated,
-      id,
-      candidateGroups,
-      cursor,
-      engPool.length,
-      DEFAULT_GROUP_WINDOW
-    )
+    const best = pickBestStructuralAIForSubtitle(validated, id)
     if (best) {
       const { validationFlags: _v, applyable: _a, ...row } = best
       applyable.push(row)
     }
   }
 
-  const report = buildAlignmentReport(batchSubtitleIds, validated, candidateGroups, {
+  const report = buildAlignmentReport(batchSubtitleIds, validated, localEnglishContext.segmentIds, {
     confidenceThresholdPct: input.confidenceThresholdPct,
     drift
   })

@@ -1,57 +1,24 @@
-import type { CandidateMatch, CandidateSegmentGroup, SubtitleStatus } from '../../types'
-import { candidateGroupsById, getEnglishPoolWindowBounds } from './candidateGroups'
-import { DEFAULT_GROUP_WINDOW } from './constants'
-import type { AlignmentMatchValidated, AlignmentMatchValidationFlag } from './types'
-import { confidenceToPercent } from './types'
+import type { CandidateMatch, SubtitleStatus } from '../../types'
+import { ALIGNMENT_HARD_BLOCK_FLAGS } from './matchFlags'
+import { confidenceToPercent, type AlignmentMatchValidated } from './types'
 
 /** 不满足则不能把 DeepSeek 行写入 english。 */
-const STRUCTURAL_NO_WRITE_FLAGS: AlignmentMatchValidationFlag[] = [
-  'missing_subtitle',
-  'invalid_candidate',
-  'invalid_segment_id',
-  'invalid_group_id',
-  'english_not_from_group',
-  'empty_english'
-]
-
-export function isStructuralAIWritable(
-  row: AlignmentMatchValidated,
-  candidateGroups: CandidateSegmentGroup[],
-  cursor: number,
-  poolLength: number,
-  windowSize: number = DEFAULT_GROUP_WINDOW
-): boolean {
-  if (!row.groupId || !row.english.trim()) return false
-  if (row.validationFlags.some((f) => STRUCTURAL_NO_WRITE_FLAGS.includes(f))) return false
-  const g = candidateGroupsById(candidateGroups).get(row.groupId)
-  if (!g) return false
-  const { windowStart, windowEnd } = getEnglishPoolWindowBounds(poolLength, cursor, windowSize)
-  if (g.startSegmentIndex < windowStart || g.endSegmentIndex > windowEnd) return false
-  return true
+export function isStructuralAIWritable(row: AlignmentMatchValidated): boolean {
+  if (!row.english.trim()) return false
+  return !row.validationFlags.some((f) => ALIGNMENT_HARD_BLOCK_FLAGS.includes(f))
 }
 
 export function pickBestStructuralAIForSubtitle(
   validated: AlignmentMatchValidated[],
-  subtitleId: number,
-  candidateGroups: CandidateSegmentGroup[],
-  cursor: number,
-  poolLength: number,
-  windowSize: number = DEFAULT_GROUP_WINDOW
+  subtitleId: number
 ): AlignmentMatchValidated | null {
-  const rows = validated.filter(
-    (r) =>
-      r.subtitleId === subtitleId &&
-      isStructuralAIWritable(r, candidateGroups, cursor, poolLength, windowSize)
-  )
+  const rows = validated.filter((r) => r.subtitleId === subtitleId && isStructuralAIWritable(r))
   if (rows.length === 0) return null
   rows.sort((a, b) => b.confidence - a.confidence)
   return rows[0] ?? null
 }
 
-export function deriveStatusAfterAI(
-  row: AlignmentMatchValidated,
-  thresholdPct: number
-): SubtitleStatus {
+export function deriveStatusAfterAI(row: AlignmentMatchValidated, thresholdPct: number): SubtitleStatus {
   if (confidenceToPercent(row.confidence) < thresholdPct) {
     return 'low_confidence'
   }
@@ -59,10 +26,7 @@ export function deriveStatusAfterAI(
 }
 
 /** 用户可读问题文案（写入 SubtitleLine.problems）。 */
-export function readableProblemsForAIRow(
-  row: AlignmentMatchValidated,
-  thresholdPct: number
-): string[] {
+export function readableProblemsForAIRow(row: AlignmentMatchValidated, thresholdPct: number): string[] {
   const out: string[] = []
   if (confidenceToPercent(row.confidence) < thresholdPct) {
     out.push('AI confidence is low.')
@@ -98,6 +62,9 @@ export function formatProblemForDisplay(raw: string): string {
       case 'ai_alignment:invalid_segment':
       case 'ai_alignment:english_mismatch':
       case 'ai_alignment:invalid_candidate':
+      case 'ai_alignment:english_not_in_context':
+      case 'ai_alignment:non_contiguous_segments':
+      case 'ai_alignment:duplicate_english_in_batch':
         return 'AI did not return a reliable match.'
       default:
         return '请在本行复查对齐结果。'
@@ -120,11 +87,7 @@ export function validatedRowToCandidate(row: AlignmentMatchValidated): Candidate
 
 export function buildCandidatesForSubtitle(
   rowsForSub: AlignmentMatchValidated[],
-  primary: AlignmentMatchValidated | null,
-  candidateGroups: CandidateSegmentGroup[],
-  cursor: number,
-  poolLength: number,
-  windowSize: number = DEFAULT_GROUP_WINDOW
+  primary: AlignmentMatchValidated | null
 ): CandidateMatch[] {
   const out: CandidateMatch[] = []
   const seen = new Set<string>()
@@ -141,11 +104,12 @@ export function buildCandidatesForSubtitle(
     push(validatedRowToCandidate(primary))
   }
 
+  const primaryKey = primary ? normalizedEnglishKey(primary.english) : ''
   const aiOthers = [...rowsForSub]
     .filter(
       (r) =>
-        isStructuralAIWritable(r, candidateGroups, cursor, poolLength, windowSize) &&
-        (!primary || r.groupId !== primary.groupId)
+        isStructuralAIWritable(r) &&
+        (!primary || normalizedEnglishKey(r.english) !== primaryKey)
     )
     .sort((a, b) => b.confidence - a.confidence)
 
@@ -156,14 +120,15 @@ export function buildCandidatesForSubtitle(
   return out
 }
 
+function normalizedEnglishKey(s: string): string {
+  return s.trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
 export function isManagedAlignmentProblem(p: string): boolean {
   return p.startsWith('ai_alignment:') || ALIGNMENT_USER_READABLE_MESSAGES.has(p)
 }
 
-export function mergeAlignmentProblems(
-  existing: string[],
-  newProblems: string[]
-): string[] {
+export function mergeAlignmentProblems(existing: string[], newProblems: string[]): string[] {
   const kept = existing.filter((p) => !isManagedAlignmentProblem(p))
   const merged = [...kept]
   for (const p of newProblems) {

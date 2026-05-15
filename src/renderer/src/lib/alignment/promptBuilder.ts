@@ -7,20 +7,21 @@ import type {
 
 const SYSTEM_PROMPT = `You are a bilingual subtitle alignment engine for consecutive interview subtitles.
 
-The user JSON contains one shared list "englishCandidateGroups". Each group has groupId, segmentIds, and text. You MUST pick groupId only from that list.
-
-localEnglishContextBlock (if present) is read-only context for discourse flow; do NOT output its full text as subtitle.english — only the exact "english" field of the chosen group.
+You receive localEnglishContextBlock: a read-only window of English transcript text (segmentIds + joined text). Your job is semantic slicing and semantic matching: for each Chinese subtitle line, choose the English phrase that best aligns with it.
 
 Rules:
-1. Process subtitles in ascending orderIndex.
-2. Return exactly one match per subtitleId — no skips, no empty english.
-3. Each groupId at most once per batch (unless the model truly cannot fit; still never invent ids).
-4. matchedSegmentIds and english must match the chosen group exactly.
-5. Do NOT invent ids or paraphrase English.
-6. confidence is 0–1; reason is a short English explanation.
+1. For each subtitle, output english as an EXACT contiguous substring of localEnglishContextBlock.text (after normalizing your internal whitespace to single spaces). Do not paraphrase or translate.
+2. matchedSegmentIds must list every Script Pool segment id that your english span covers, in order, contiguous in the pool (infer from the substring position if unsure).
+3. groupId is optional; use "g_context" if you have no separate group id.
+4. Process subtitles in ascending orderIndex.
+5. Return exactly one match per subtitleId — no skips, no empty english.
+6. Prefer moving forward in transcript order across the batch when plausible.
+7. confidence is 0–1; reason is a short English explanation.
+
+englishCandidateGroups (if present) is DEBUG ONLY — a per-segment slice list. Do NOT select from it. Slicing is your responsibility inside localEnglishContextBlock.text.
 
 Output: JSON only. Shape:
-{"matches":[{"subtitleId":7,"groupId":"g_10_12","matchedSegmentIds":["seg_10","seg_11"],"english":"...","confidence":0.91,"reason":"..."}]}`
+{"matches":[{"subtitleId":7,"groupId":"g_context","matchedSegmentIds":["…"],"english":"exact substring from context","confidence":0.91,"reason":"..."}]}`
 
 function serializeCandidateGroup(g: CandidateSegmentGroup) {
   return {
@@ -42,9 +43,9 @@ export function buildBatchAlignmentUserPayload(input: BatchAlignmentPromptInput)
       subtitleIds,
       isConsecutiveDiscourse: true,
       workflow: [
-        'Pick groupId only from englishCandidateGroups.',
-        'Use localEnglishContextBlock only to understand flow; output must be a chosen group text, not the full context.',
-        'Prefer moving forward in pool segment order across the batch.'
+        'Slice and align using localEnglishContextBlock.text only (exact substring).',
+        'englishCandidateGroups is debug reference only — do not pick groupId from it.',
+        'Prefer forward motion in pool segment order across the batch.'
       ]
     },
     subtitles: subtitles.map((s) => ({
@@ -52,10 +53,10 @@ export function buildBatchAlignmentUserPayload(input: BatchAlignmentPromptInput)
       orderIndex: s.orderIndex,
       chinese: s.chinese
     })),
-    englishCandidateGroups: candidateGroups.map(serializeCandidateGroup),
+    englishCandidateGroupsDebug: candidateGroups.map(serializeCandidateGroup),
     constraints: {
-      selectionMode: 'shared_candidate_group_list',
-      segmentReuse: 'Each groupId at most once per batch when possible.',
+      selectionMode: 'local_context_substring',
+      segmentReuse: 'Avoid reusing the same English span when two subtitles need distinct phrases.',
       ordering: 'subtitles_fixed_order',
       oneMatchPerSubtitle: true,
       batchIsConsecutive: true,
@@ -72,7 +73,7 @@ export function buildBatchAlignmentUserPayload(input: BatchAlignmentPromptInput)
       endSegmentIndex: localEnglishContext.endSegmentIndex,
       segmentCount: localEnglishContext.segmentCount,
       note:
-        'Read-only context for discourse only. Never paste this block as subtitle.english — only pick from englishCandidateGroups.'
+        'Authoritative English source. Each subtitle.english must be copied verbatim as a contiguous substring of "text" (space-normalized).'
     }
   }
 
@@ -147,10 +148,13 @@ function parseMatchRow(x: unknown): AlignmentMatchRow | null {
   const o = x as Record<string, unknown>
   const subtitleId = coerceInt(o.subtitleId)
   if (subtitleId == null) return null
-  if (typeof o.groupId !== 'string' || o.groupId.trim() === '') return null
-  if (!Array.isArray(o.matchedSegmentIds) || !o.matchedSegmentIds.every((id) => typeof id === 'string')) {
-    return null
-  }
+  const groupIdRaw = o.groupId
+  const groupId =
+    typeof groupIdRaw === 'string' && groupIdRaw.trim() !== '' ? groupIdRaw.trim() : 'g_context'
+  const idsRaw = o.matchedSegmentIds
+  const matchedSegmentIds = Array.isArray(idsRaw)
+    ? idsRaw.filter((id): id is string => typeof id === 'string')
+    : []
   if (typeof o.english !== 'string') return null
   const confRaw = o.confidence
   const confidence =
@@ -163,8 +167,8 @@ function parseMatchRow(x: unknown): AlignmentMatchRow | null {
   if (typeof o.reason !== 'string') return null
   return {
     subtitleId,
-    groupId: o.groupId.trim(),
-    matchedSegmentIds: o.matchedSegmentIds as string[],
+    groupId,
+    matchedSegmentIds,
     english: o.english,
     confidence,
     reason: o.reason

@@ -20,8 +20,9 @@ export interface AlignmentMatchRow {
 export type AlignmentMatchValidationFlag =
   | 'invalid_candidate'
   | 'invalid_segment_id'
-  | 'invalid_group_id'
-  | 'english_not_from_group'
+  | 'english_not_in_context'
+  | 'non_contiguous_segments'
+  | 'duplicate_english_in_batch'
   | 'missing_subtitle'
   | 'empty_english'
 

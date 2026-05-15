@@ -1,8 +1,10 @@
 import { containsChinese } from '../language'
-import type { CandidateSegmentGroup } from '../../types'
-import { englishMatchesGroupText, getEnglishPoolWindowBounds } from './candidateGroups'
+import type { ScriptSegment } from '../../types'
+import type { LocalEnglishContextBlock } from './englishBlock'
+import { getEnglishPoolWindowBounds } from './candidateGroups'
 import { DEFAULT_GROUP_WINDOW } from './constants'
-import { computeMatchApplyable } from './sequentialAlignment'
+import { normalizeGroupText } from './textUtils'
+import { computeMatchApplyable } from './matchFlags'
 import type {
   AlignmentMatchRow,
   AlignmentMatchValidated,
@@ -11,30 +13,39 @@ import type {
 
 export interface ValidateAlignmentResultInput {
   result: AlignmentMatchRow[]
-  candidateGroups: CandidateSegmentGroup[]
+  /** 模型须在拼接后的该文本中取连续子串作为 english。 */
+  localEnglishContext: LocalEnglishContextBlock | null
+  /** 用于 segment id 与连续下标校验的英文池（与游标窗口同源）。 */
+  englishPool: ScriptSegment[]
   expectedSubtitleIds: number[]
-  /** 与 DeepSeek 候选窗口一致时校验 group 是否在池窗口内。 */
   alignmentWindow?: { englishCursor: number; poolLength: number; windowSize?: number }
 }
 
-function segmentIdsEqualAsSet(a: string[], b: string[]): boolean {
-  if (a.length !== b.length) return false
-  const sa = [...a].sort()
-  const sb = [...b].sort()
-  return sa.every((x, i) => x === sb[i])
+function segmentIndexMap(pool: ScriptSegment[]): Map<string, number> {
+  return new Map(pool.map((s, i) => [s.id, i]))
 }
 
-function allIdsInGroups(groups: CandidateSegmentGroup[]): Set<string> {
-  const s = new Set<string>()
-  for (const g of groups) for (const id of g.segmentIds) s.add(id)
-  return s
+function areContiguousInPool(pool: ScriptSegment[], ids: string[]): boolean {
+  if (ids.length === 0) return false
+  const map = segmentIndexMap(pool)
+  const idx = ids.map((id) => map.get(id)).filter((x): x is number => x !== undefined)
+  if (idx.length !== ids.length) return false
+  idx.sort((a, b) => a - b)
+  for (let k = 1; k < idx.length; k++) {
+    if (idx[k] !== idx[k - 1]! + 1) return false
+  }
+  return true
+}
+
+function normalizedEnglishKey(s: string): string {
+  return normalizeGroupText(s).toLowerCase()
 }
 
 export function validateAlignmentResult(input: ValidateAlignmentResultInput): AlignmentMatchValidated[] {
-  const { result, candidateGroups, expectedSubtitleIds, alignmentWindow } = input
-  const groupsById = new Map(candidateGroups.map((g) => [g.id, g]))
-  const allowedIds = allIdsInGroups(candidateGroups)
+  const { result, localEnglishContext, englishPool, expectedSubtitleIds, alignmentWindow } = input
   const expected = new Set(expectedSubtitleIds)
+  const ctxText = localEnglishContext ? normalizeGroupText(localEnglishContext.text) : ''
+  const allowedIds = new Set(localEnglishContext?.segmentIds ?? [])
 
   const win =
     alignmentWindow && alignmentWindow.poolLength > 0
@@ -45,23 +56,47 @@ export function validateAlignmentResult(input: ValidateAlignmentResultInput): Al
         )
       : null
 
+  const dupCounts = new Map<string, number>()
+  for (const m of result) {
+    const k = normalizedEnglishKey(m.english)
+    if (k) dupCounts.set(k, (dupCounts.get(k) ?? 0) + 1)
+  }
+
   const base = result.map((m) => {
     const flags: AlignmentMatchValidationFlag[] = []
     if (!m.english.trim()) flags.push('empty_english')
     if (containsChinese(m.english)) flags.push('invalid_candidate')
 
-    const g = groupsById.get(m.groupId)
-    if (!g) flags.push('invalid_group_id')
-    else {
-      if (!segmentIdsEqualAsSet(m.matchedSegmentIds, g.segmentIds)) flags.push('invalid_segment_id')
-      if (!englishMatchesGroupText(m.english, g.text)) flags.push('english_not_from_group')
-      if (win && (g.startSegmentIndex < win.windowStart || g.endSegmentIndex > win.windowEnd)) {
-        flags.push('invalid_group_id')
+    if (!localEnglishContext) {
+      flags.push('english_not_in_context')
+    } else {
+      const ne = normalizeGroupText(m.english)
+      if (!ne) flags.push('empty_english')
+      else if (!ctxText.toLowerCase().includes(ne.toLowerCase())) {
+        flags.push('english_not_in_context')
       }
     }
 
     if (m.matchedSegmentIds.length === 0) flags.push('invalid_segment_id')
-    if (m.matchedSegmentIds.some((id) => !allowedIds.has(id))) flags.push('invalid_segment_id')
+    for (const id of m.matchedSegmentIds) {
+      if (!allowedIds.has(id)) flags.push('invalid_segment_id')
+    }
+    if (m.matchedSegmentIds.length > 0 && !areContiguousInPool(englishPool, m.matchedSegmentIds)) {
+      flags.push('non_contiguous_segments')
+    }
+    if (win) {
+      const map = segmentIndexMap(englishPool)
+      for (const id of m.matchedSegmentIds) {
+        const ix = map.get(id)
+        if (ix == null || ix < win.windowStart || ix > win.windowEnd) {
+          flags.push('invalid_segment_id')
+          break
+        }
+      }
+    }
+
+    const dk = normalizedEnglishKey(m.english)
+    if (dk && (dupCounts.get(dk) ?? 0) > 1) flags.push('duplicate_english_in_batch')
 
     return { ...m, validationFlags: flags, applyable: computeMatchApplyable(flags) }
   })

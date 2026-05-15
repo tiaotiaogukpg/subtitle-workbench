@@ -1,5 +1,5 @@
 import { ALIGNMENT_USER_READABLE_MESSAGES } from './applyPolicy'
-import type { CandidateSegmentGroup, ScriptSegment, SubtitleLine } from '../../types'
+import type { ScriptSegment, SubtitleLine } from '../../types'
 import { filterEnglishPoolSegments } from './englishPool'
 import type { AlignmentDriftResult } from './sequentialAlignment'
 import type { AlignmentMatchValidated } from './types'
@@ -65,12 +65,12 @@ export function checkEnglishSegmentUsage(
 export function buildAlignmentReport(
   expectedSubtitleIds: number[],
   validated: AlignmentMatchValidated[],
-  candidateGroups: CandidateSegmentGroup[],
+  scopeSegmentIds: string[],
   options?: { confidenceThresholdPct?: number; drift?: AlignmentDriftResult }
 ): AlignmentReport {
   const { missingSubtitleIds } = checkSubtitleCompleteness(expectedSubtitleIds, validated)
   const { duplicateSegmentIds, unusedSegmentIdsInWindow } = checkEnglishSegmentUsage(
-    candidateGroups.flatMap((g) => g.segmentIds),
+    scopeSegmentIds,
     validated
   )
   const applyable = validated.filter((v) => v.applyable)

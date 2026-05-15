@@ -4,7 +4,7 @@ import {
   LOCAL_ENGLISH_CONTEXT_MAX_SEGMENTS,
   LOCAL_ENGLISH_CONTEXT_MIN_SEGMENTS
 } from './constants'
-import { normalizeGroupText } from './candidateGroups'
+import { normalizeGroupText } from './textUtils'
 
 /** Prompt 中的只读 local English context（不可作为 groupId 直接选用）。 */
 export interface LocalEnglishContextBlock {

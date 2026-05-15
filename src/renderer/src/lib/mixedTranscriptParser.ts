@@ -104,7 +104,7 @@ function newSegment(
  * - 空行不产生 segment。
  * - `speaker` → `language: unknown`，`used: false`。
  * - `mixed` 整行一条，不切句。
- * - `english` / `chinese` 在单行内按各自句末标点切分；子句共享同一 `sourceLine`。
+ * - `english` / `chinese`：单行内按各自句末标点切分；子句共享同一 `sourceLine`。
  */
 export function parseMixedTranscript(raw: string): ScriptSegment[] {
   const normalized = raw.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
