@@ -1,4 +1,5 @@
-import type { SubtitleStatus } from '../../types'
+import type { CandidateSegmentGroup, SubtitleStatus } from '../../types'
+import type { LocalEnglishContextBlock } from './englishBlock'
 
 export interface AlignmentPromptSubtitle {
   subtitleId: number
@@ -15,18 +16,14 @@ export interface AlignmentMatchRow {
   reason: string
 }
 
+/** 对齐结果最小校验标记（仅硬阻断写入）。 */
 export type AlignmentMatchValidationFlag =
   | 'invalid_candidate'
   | 'invalid_segment_id'
-  | 'duplicate_segment'
   | 'invalid_group_id'
   | 'english_not_from_group'
   | 'missing_subtitle'
   | 'empty_english'
-  | 'segment_jump'
-  | 'segment_backward'
-  | 'sequential_fallback'
-  | 'alignment_drift'
 
 export interface AlignmentMatchValidated extends AlignmentMatchRow {
   validationFlags: AlignmentMatchValidationFlag[]
@@ -35,6 +32,12 @@ export interface AlignmentMatchValidated extends AlignmentMatchRow {
 
 export interface AlignmentModelResponseShape {
   matches: AlignmentMatchRow[]
+}
+
+export interface BatchAlignmentPromptInput {
+  subtitles: AlignmentPromptSubtitle[]
+  candidateGroups: CandidateSegmentGroup[]
+  localEnglishContext?: LocalEnglishContextBlock | null
 }
 
 export function confidenceToPercent(conf: number): number {

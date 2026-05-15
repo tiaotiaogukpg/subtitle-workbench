@@ -7,6 +7,7 @@ import {
   type JSX,
   type MouseEvent
 } from 'react'
+import { AlignmentDriftRecoveryPanel } from './AlignmentDriftRecoveryPanel'
 import {
   advanceEnglishCursor,
   computeSmallBatchAlignmentPlan,
@@ -54,7 +55,6 @@ export function AiAlignmentWorkflowModal({
 
   const phase = useAlignmentPreviewStore((s) => s.phase)
   const runError = useAlignmentPreviewStore((s) => s.runError)
-  const previewMatches = useAlignmentPreviewStore((s) => s.previewMatches)
   const applyableMatches = useAlignmentPreviewStore((s) => s.applyableMatches)
   const batchSubtitleIds = useAlignmentPreviewStore((s) => s.batchSubtitleIds)
   const debug = useAlignmentPreviewStore((s) => s.debug)
@@ -65,6 +65,7 @@ export function AiAlignmentWorkflowModal({
 
   const sessionStatus = useAlignmentSessionStore((s) => s.status)
   const sessionActive = isAlignmentSessionActive(sessionStatus)
+  const driftRecovering = sessionStatus === 'drift_recovery'
   const sessionSummary = useAlignmentSessionStore((s) => s.lastSummary)
   const sessionError = useAlignmentSessionStore((s) => s.lastError)
   const activeConfig = useAlignmentSessionStore((s) => s.activeConfig)
@@ -145,7 +146,7 @@ export function AiAlignmentWorkflowModal({
   }, [draft, onCommitAlignSettings])
 
   const handleRunFullFile = useCallback(() => {
-    if (sessionActive) return
+    if (sessionActive || driftRecovering) return
     commitDraftToSettings()
     const err = onStartAlignment({ ...draft, mode: 'full_file' })
     if (err) {
@@ -153,14 +154,14 @@ export function AiAlignmentWorkflowModal({
       return
     }
     onClose()
-  }, [sessionActive, draft, commitDraftToSettings, onStartAlignment, onClose])
+  }, [sessionActive, driftRecovering, draft, commitDraftToSettings, onStartAlignment, onClose])
 
   const handleRunBatchTest = useCallback(() => {
-    if (sessionActive) return
+    if (sessionActive || driftRecovering) return
     commitDraftToSettings()
     const err = onStartAlignment({ ...draft, mode: 'batch_test' })
     if (err) window.alert(err)
-  }, [sessionActive, draft, commitDraftToSettings, onStartAlignment])
+  }, [sessionActive, driftRecovering, draft, commitDraftToSettings, onStartAlignment])
 
   const handleApply = useCallback(() => {
     const state = useAlignmentPreviewStore.getState()
@@ -217,21 +218,22 @@ export function AiAlignmentWorkflowModal({
   }
 
   const applyableCount = applyableMatches?.length ?? 0
-  const displayMatches = previewMatches ?? []
   const previewReady = phase === 'ready'
   const hasApplyableDebugResult =
     previewReady && applyableCount > 0 && !sessionActive && sessionMode !== 'full_file'
 
-  const canRunFullFile = !sessionActive && !prereqError && subtitles.length > 0
+  const canRunFullFile = !sessionActive && !driftRecovering && !prereqError && subtitles.length > 0
   const canRunBatchTest =
     !sessionActive &&
+    !driftRecovering &&
     !prereqError &&
     Boolean(plan) &&
     (plan?.candidateGroups.length ?? 0) > 0
 
   const showRunFullAgain =
     !sessionActive &&
-    (sessionStatus === 'completed' || sessionStatus === 'failed') &&
+    !driftRecovering &&
+    (sessionStatus === 'completed' || sessionStatus === 'failed' || sessionStatus === 'stopped') &&
     (sessionMode === 'full_file' || sessionMode === null)
 
   const totalBatchesEstimate = Math.max(1, Math.ceil(subtitles.length / draft.batchSize))
@@ -282,21 +284,35 @@ export function AiAlignmentWorkflowModal({
                 <p className="mt-1 text-meta">{sessionSummary}</p>
                 <p className="mt-1 text-meta">可关闭本窗口；右侧 Panel 将持续更新。</p>
               </div>
-            ) : sessionStatus === 'completed' || sessionStatus === 'failed' ? (
+            ) : driftRecovering ? (
+              <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-900 dark:text-amber-100">
+                <p className="font-semibold">对齐漂移 · 等待人工恢复</p>
+                <p className="mt-1 text-meta leading-snug">{sessionSummary}</p>
+                <p className="mt-1 text-meta">请使用下方恢复区，或右侧 Alignment Panel 中的相同控件。</p>
+              </div>
+            ) : sessionStatus === 'completed' || sessionStatus === 'failed' || sessionStatus === 'stopped' ? (
               <div
                 className={`rounded-lg border px-3 py-2 text-[12px] ${
                   sessionStatus === 'failed'
                     ? 'border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300'
-                    : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
+                    : sessionStatus === 'stopped'
+                      ? 'border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] text-secondary'
+                      : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
                 }`}
               >
                 <p className="font-semibold">
-                  {sessionStatus === 'failed' ? '上次整文件任务失败' : '上次整文件任务已完成'}
+                  {sessionStatus === 'failed'
+                    ? '上次整文件任务失败'
+                    : sessionStatus === 'stopped'
+                      ? '上次整文件任务已停止'
+                      : '上次整文件任务已完成'}
                 </p>
                 <p className="mt-1">{sessionSummary}</p>
                 {sessionError ? <p className="mt-1 text-meta">{sessionError}</p> : null}
               </div>
             ) : null}
+
+            {driftRecovering ? <AlignmentDriftRecoveryPanel compact /> : null}
 
             <section className="settings-section">
               <h3 className="settings-heading">对齐参数</h3>
@@ -306,7 +322,7 @@ export function AiAlignmentWorkflowModal({
                   <select
                     className="settings-select mt-1 w-full"
                     value={draft.model}
-                    disabled={sessionActive}
+                    disabled={sessionActive || driftRecovering}
                     onChange={(e) => patchDraft({ model: e.currentTarget.value })}
                   >
                     <option value="deepseek-chat">deepseek-chat</option>
@@ -322,7 +338,7 @@ export function AiAlignmentWorkflowModal({
                     max={50}
                     step={1}
                     value={draft.batchSize}
-                    disabled={sessionActive}
+                    disabled={sessionActive || driftRecovering}
                     onChange={(e) => {
                       const next = parseSettingsInt(e.currentTarget.value, 1, 50)
                       if (next === null) return
@@ -340,7 +356,7 @@ export function AiAlignmentWorkflowModal({
                       max={100}
                       step={1}
                       value={draft.confidenceThreshold}
-                      disabled={sessionActive}
+                      disabled={sessionActive || driftRecovering}
                       onChange={(e) => {
                         const next = parseSettingsInt(e.currentTarget.value, 0, 100)
                         if (next === null) return
@@ -375,7 +391,7 @@ export function AiAlignmentWorkflowModal({
                 <button
                   type="button"
                   className="toolbar-btn text-[12px]"
-                  disabled={connPhase === 'testing' || sessionActive}
+                  disabled={connPhase === 'testing' || sessionActive || driftRecovering}
                   onClick={() => void testConnection()}
                 >
                   {connPhase === 'testing' ? '测试中…' : 'Test Connection'}
@@ -406,7 +422,6 @@ export function AiAlignmentWorkflowModal({
                   <li>可应用: {lastReport.matchedSubtitleCount}</li>
                   <li>低置信度: {lastReport.lowConfidenceCount}</li>
                   <li>需复查: {lastReport.needsReviewCount}</li>
-                  <li>顺序补齐: {lastReport.sequentialFallbackCount}</li>
                   {lastReport.alignmentDrift ? (
                     <li className="text-amber-700 dark:text-amber-300">
                       alignment drift: {lastReport.alignmentDriftReasons.join(' · ')}
@@ -446,7 +461,7 @@ export function AiAlignmentWorkflowModal({
                     className="settings-input mt-1 w-full font-mono tabular-nums"
                     min={0}
                     value={englishCursor}
-                    disabled={sessionActive}
+                    disabled={sessionActive || driftRecovering}
                     onChange={(e) => {
                       const v = parseSettingsInt(e.currentTarget.value, 0, Math.max(0, engPoolSize))
                       if (v === null) return
@@ -460,7 +475,7 @@ export function AiAlignmentWorkflowModal({
                 <button
                   type="button"
                   className="toolbar-btn text-[12px]"
-                  disabled={!canRunBatchTest || sessionActive}
+                  disabled={!canRunBatchTest || sessionActive || driftRecovering}
                   onClick={handleRunBatchTest}
                 >
                   运行当前小批测试
@@ -478,7 +493,7 @@ export function AiAlignmentWorkflowModal({
                   <button
                     type="button"
                     className="type-caption text-meta underline decoration-dotted"
-                    disabled={sessionActive}
+                    disabled={sessionActive || driftRecovering}
                     onClick={() => resetPreview()}
                   >
                     清除预览
@@ -544,41 +559,36 @@ export function AiAlignmentWorkflowModal({
               </div>
 
               <div className="mt-4">
-                <p className="type-field-label">Result / Debug</p>
+                <p className="type-field-label">校验与模型输出</p>
                 {phase === 'error' && runError ? (
-                  <p className="type-caption text-red-600">{runError}</p>
+                  <p className="type-caption mt-1 text-red-600">{runError}</p>
                 ) : null}
                 {debug ? (
-                  <div className="mt-2 space-y-2 font-mono text-[11px] text-secondary">
-                    <p className="text-meta">latency: {debug.latencyMs} ms</p>
-                    {debug.validationWarnings.length > 0 ? (
-                      <ul className="list-inside list-disc text-amber-800 dark:text-amber-200">
-                        {debug.validationWarnings.map((w, i) => (
-                          <li key={i}>{w}</li>
-                        ))}
-                      </ul>
-                    ) : null}
-                    <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-words rounded bg-[var(--color-bg-base)] p-2 text-[10px]">
-                      {debug.rawResponse || '—'}
-                    </pre>
+                  <div className="mt-2 space-y-3 text-[12px] text-secondary">
+                    <div>
+                      <p className="type-caption text-meta mb-1">Validation</p>
+                      {debug.validationResult.length > 0 ? (
+                        <ul className="list-inside list-disc font-mono text-[11px] text-amber-800 dark:text-amber-200">
+                          {debug.validationResult.map((w, i) => (
+                            <li key={i}>{w}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="type-caption text-meta">无校验告警</p>
+                      )}
+                    </div>
+                    <div>
+                      <p className="type-caption text-meta mb-1">Raw response</p>
+                      <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-[var(--color-bg-base)] p-2 font-mono text-[10px]">
+                        {debug.rawResponse || '—'}
+                      </pre>
+                    </div>
+                    <p className="type-caption text-meta">batch ids: {batchSubtitleIds.join(', ') || '—'}</p>
                   </div>
-                ) : phase === 'ready' && displayMatches.length > 0 ? (
-                  <div className="mt-2 max-h-36 space-y-2 overflow-y-auto text-[12px]">
-                    {displayMatches.map((m, i) => (
-                      <div
-                        key={`${m.subtitleId}-${i}`}
-                        className={`rounded border p-2 ${
-                          m.applyable ? 'border-[var(--color-border-subtle)]' : 'border-red-500/40'
-                        }`}
-                      >
-                        <p className="font-mono text-meta">#{m.subtitleId}</p>
-                        <p className="mt-1">{m.english || '（空）'}</p>
-                      </div>
-                    ))}
-                    <p className="type-caption text-meta">batch ids: {batchSubtitleIds.join(', ')}</p>
-                  </div>
-                ) : (
+                ) : phase === 'ready' ? (
                   <p className="type-caption mt-1 text-meta">运行小批测试后显示。</p>
+                ) : (
+                  <p className="type-caption mt-1 text-meta">运行小批测试后显示校验与原始响应。</p>
                 )}
               </div>
             </details>
@@ -603,7 +613,7 @@ export function AiAlignmentWorkflowModal({
               再次运行整文件对齐
             </button>
           ) : null}
-          {!sessionActive && !showRunFullAgain ? (
+          {!sessionActive && !showRunFullAgain && !driftRecovering ? (
             <button
               type="button"
               className="settings-footer-button btn-accent-solid"

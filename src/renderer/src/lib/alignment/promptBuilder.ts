@@ -1,52 +1,37 @@
 import type { CandidateSegmentGroup } from '../../types'
-import type { LocalEnglishContextBlock } from './englishBlock'
-import type { AlignmentMatchRow, AlignmentModelResponseShape, AlignmentPromptSubtitle } from './types'
-
-export function estimatePromptTokens(text: string): number {
-  return Math.max(1, Math.ceil(text.length / 4))
-}
+import type {
+  AlignmentMatchRow,
+  AlignmentModelResponseShape,
+  BatchAlignmentPromptInput
+} from './types'
 
 const SYSTEM_PROMPT = `You are a bilingual subtitle alignment engine for consecutive interview subtitles.
 
-Critical batch model:
-- The subtitles in this batch are ONE continuous Chinese discourse span (e.g. #006–#011).
-- They usually map to ONE continuous English answer flow in localEnglishContextBlock — not one isolated English sentence per Chinese line.
-- Read the entire batch and the full local English context BEFORE assigning any groupId.
-- Do NOT treat each subtitle as an independent search task.
+The user JSON contains one shared list "englishCandidateGroups". Each group has groupId, segmentIds, and text. You MUST pick groupId only from that list.
 
-Workflow:
-1. Read all Chinese lines in order and infer the shared English answer flow.
-2. Read localEnglishContextBlock (if present) as the likely continuous English source.
-3. Assign englishCandidateGroups in ascending pool segment order across the batch.
-4. Typical pattern: subtitle #006 → seg20–21, #007 → seg22, #008 → seg23 (forward, no large jumps).
-
-Task: Match each Chinese subtitle to exactly ONE group from "englishCandidateGroups".
+localEnglishContextBlock (if present) is read-only context for discourse flow; do NOT output its full text as subtitle.english — only the exact "english" field of the chosen group.
 
 Rules:
-1. Process subtitles in ascending orderIndex order.
-2. Return exactly one match row per subtitleId in the batch — no skips, no empty english.
-3. Each script segment id may be used at most once in this batch.
-4. Pick only groupId from "englishCandidateGroups"; matchedSegmentIds and english must match that group exactly.
+1. Process subtitles in ascending orderIndex.
+2. Return exactly one match per subtitleId — no skips, no empty english.
+3. Each groupId at most once per batch (unless the model truly cannot fit; still never invent ids).
+4. matchedSegmentIds and english must match the chosen group exactly.
 5. Do NOT invent ids or paraphrase English.
 6. confidence is 0–1; reason is a short English explanation.
-
-Sequential discipline:
-- Segment indices should move forward: startIndex of each row should be near the previous row's endIndex.
-- No large jumps (e.g. #006 → pool[20], #007 → pool[88] is wrong).
-- No backward reuse of earlier segments.
-- If uncertain, still return the best plausible next group with lower confidence — never omit a subtitle.
-
-Local English context:
-- localEnglishContextBlock is read-only background for the continuous answer flow.
-- You MUST still choose groupId only from englishCandidateGroups.
 
 Output: JSON only. Shape:
 {"matches":[{"subtitleId":7,"groupId":"g_10_12","matchedSegmentIds":["seg_10","seg_11"],"english":"...","confidence":0.91,"reason":"..."}]}`
 
-export interface BatchAlignmentPromptInput {
-  subtitles: AlignmentPromptSubtitle[]
-  candidateGroups: CandidateSegmentGroup[]
-  localEnglishContext?: LocalEnglishContextBlock | null
+function serializeCandidateGroup(g: CandidateSegmentGroup) {
+  return {
+    groupId: g.id,
+    segmentIds: g.segmentIds,
+    text: g.text,
+    startSegmentIndex: g.startSegmentIndex,
+    endSegmentIndex: g.endSegmentIndex,
+    wordCount: g.wordCount,
+    charCount: g.charCount
+  }
 }
 
 export function buildBatchAlignmentUserPayload(input: BatchAlignmentPromptInput): string {
@@ -57,33 +42,25 @@ export function buildBatchAlignmentUserPayload(input: BatchAlignmentPromptInput)
       subtitleIds,
       isConsecutiveDiscourse: true,
       workflow: [
-        'Treat all subtitleIds as one continuous Chinese span.',
-        'Map them to one continuous English answer flow (see localEnglishContextBlock).',
-        'Assign candidate groups in forward segment order; do not match lines in isolation.'
+        'Pick groupId only from englishCandidateGroups.',
+        'Use localEnglishContextBlock only to understand flow; output must be a chosen group text, not the full context.',
+        'Prefer moving forward in pool segment order across the batch.'
       ]
     },
-    subtitles,
-    englishCandidateGroups: candidateGroups.map((g) => ({
-      groupId: g.id,
-      segmentIds: g.segmentIds,
-      text: g.text,
-      startSegmentIndex: g.startSegmentIndex,
-      endSegmentIndex: g.endSegmentIndex,
-      wordCount: g.wordCount,
-      charCount: g.charCount
+    subtitles: subtitles.map((s) => ({
+      subtitleId: s.subtitleId,
+      orderIndex: s.orderIndex,
+      chinese: s.chinese
     })),
+    englishCandidateGroups: candidateGroups.map(serializeCandidateGroup),
     constraints: {
-      selectionMode: 'candidate_group_pick',
-      segmentReuse: 'forbidden',
+      selectionMode: 'shared_candidate_group_list',
+      segmentReuse: 'Each groupId at most once per batch when possible.',
       ordering: 'subtitles_fixed_order',
       oneMatchPerSubtitle: true,
       batchIsConsecutive: true,
-      batchIsContinuousSemanticSpan: true,
-      sequentialSegmentOrder: 'forward_only',
-      maxForwardGapSegments: 3,
       noEmptyEnglish: true,
-      localContextIsReadOnly: true,
-      selectionMustUseCandidateGroups: true
+      localContextIsReadOnly: true
     }
   }
 
@@ -94,7 +71,8 @@ export function buildBatchAlignmentUserPayload(input: BatchAlignmentPromptInput)
       startSegmentIndex: localEnglishContext.startSegmentIndex,
       endSegmentIndex: localEnglishContext.endSegmentIndex,
       segmentCount: localEnglishContext.segmentCount,
-      note: 'Context only. All matches must use groupId from englishCandidateGroups.'
+      note:
+        'Read-only context for discourse only. Never paste this block as subtitle.english — only pick from englishCandidateGroups.'
     }
   }
 

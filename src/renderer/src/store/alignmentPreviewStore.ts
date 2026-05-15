@@ -14,7 +14,6 @@ interface AlignmentPreviewState {
   lastCandidateGroups: CandidateSegmentGroup[]
   lastReport: AlignmentReport | null
   batchSubtitleIds: number[]
-  segmentIdsInContext: string[]
   englishCursor: number
   debug: AlignmentPreviewDebug | null
 }
@@ -28,7 +27,6 @@ interface AlignmentPreviewActions {
     applyable: AlignmentMatchRow[]
     candidateGroups: CandidateSegmentGroup[]
     batchSubtitleIds: number[]
-    segmentIdsInContext: string[]
     report: AlignmentReport
     debug: AlignmentPreviewDebug
   }) => void
@@ -43,7 +41,6 @@ const initial: AlignmentPreviewState = {
   lastCandidateGroups: [],
   lastReport: null,
   batchSubtitleIds: [],
-  segmentIdsInContext: [],
   englishCursor: 0,
   debug: null
 }
@@ -68,11 +65,10 @@ export const useAlignmentPreviewStore = create<AlignmentPreviewState & Alignment
       lastCandidateGroups: [],
       lastReport: null,
       batchSubtitleIds: [],
-      segmentIdsInContext: [],
       debug: null
     }),
 
-  setSuccess: ({ validated, applyable, candidateGroups, batchSubtitleIds, segmentIdsInContext, report, debug }) =>
+  setSuccess: ({ validated, applyable, candidateGroups, batchSubtitleIds, report, debug }) =>
     set({
       phase: 'ready',
       runError: null,
@@ -81,7 +77,6 @@ export const useAlignmentPreviewStore = create<AlignmentPreviewState & Alignment
       lastCandidateGroups: candidateGroups,
       lastReport: report,
       batchSubtitleIds,
-      segmentIdsInContext,
       debug
     }),
 
@@ -92,7 +87,6 @@ export const useAlignmentPreviewStore = create<AlignmentPreviewState & Alignment
       previewMatches: null,
       applyableMatches: null,
       debug: debug ?? s.debug,
-      batchSubtitleIds: s.batchSubtitleIds,
-      segmentIdsInContext: s.segmentIdsInContext
+      batchSubtitleIds: s.batchSubtitleIds
     }))
 }))

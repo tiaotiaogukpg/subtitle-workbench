@@ -66,51 +66,9 @@ export function splitEnglishSentences(text: string): string[] {
   return parts.length > 0 ? parts : [t]
 }
 
-const ENGLISH_CLAUSE_BREAK =
-  /(?<=[,;])\s+|(?<=\s)(?:and|but|so|because|then|or|yet|while|when)\s+(?=[a-z"'(])/gi
-
-const ENGLISH_PAUSE_BREAK = /\s+—\s+|\s+–\s+|\s*\.\.\.\s+/g
-
-const ENGLISH_MAX_CLAUSE_WORDS = 18
-
-function splitByMaxWords(clause: string, maxWords: number): string[] {
-  const words = clause.trim().split(/\s+/).filter(Boolean)
-  if (words.length <= maxWords) return [clause.trim()]
-  const chunks: string[] = []
-  for (let i = 0; i < words.length; i += maxWords) {
-    chunks.push(words.slice(i, i + maxWords).join(' '))
-  }
-  return chunks.filter(Boolean)
-}
-
-function splitEnglishClauses(sentence: string): string[] {
-  let parts = [sentence.trim()].filter(Boolean)
-  for (const re of [ENGLISH_PAUSE_BREAK]) {
-    parts = parts.flatMap((p) => p.split(re).map((x) => x.trim()).filter(Boolean))
-  }
-  parts = parts.flatMap((p) => {
-    const sub = p.split(ENGLISH_CLAUSE_BREAK).map((s) => s.trim()).filter(Boolean)
-    return sub.length > 0 ? sub : [p]
-  })
-  return parts.flatMap((p) => splitByMaxWords(p, ENGLISH_MAX_CLAUSE_WORDS))
-}
-
-/**
- * 英文细粒度切分：句末 → 子句（逗号/连接词/停顿）→ 过长分块。
- * 便于连续字幕对齐到细粒度 segment 流。
- */
+/** 与 `splitEnglishSentences` 等价；保留别名供旧代码引用。 */
 export function splitEnglishSegments(text: string): string[] {
-  const t = text.trim()
-  if (!t) return []
-  const lines = t.split(/\n+/).map((l) => l.trim()).filter(Boolean)
-  const paragraphs = lines.length > 0 ? lines : [t]
-  const out: string[] = []
-  for (const para of paragraphs) {
-    for (const sent of splitEnglishSentences(para)) {
-      out.push(...splitEnglishClauses(sent))
-    }
-  }
-  return out.length > 0 ? out : [t]
+  return splitEnglishSentences(text)
 }
 
 /** 中文句切分：`。！？` 后可无空格。 */
@@ -172,7 +130,7 @@ export function parseMixedTranscript(raw: string): ScriptSegment[] {
     }
 
     if (kind === 'english') {
-      for (const piece of splitEnglishSegments(trimmed)) {
+      for (const piece of splitEnglishSentences(trimmed)) {
         out.push(newSegment(piece, 'english', sourceLine, true))
       }
       continue

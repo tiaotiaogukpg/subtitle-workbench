@@ -1,4 +1,4 @@
-import type { ScriptSegment, SubtitleLine } from '../../types'
+import type { CandidateSegmentGroup, ScriptSegment, SubtitleLine } from '../../types'
 import { pickSmallBatchSubtitles } from './batchSelection'
 import { buildCandidateGroups } from './candidateGroups'
 import { buildAlignmentReport } from './completeness'
@@ -7,37 +7,26 @@ import { buildLocalEnglishContextBlock } from './englishBlock'
 import { filterEnglishPoolSegments, resolveSandboxEnglishCursor } from './englishPool'
 import {
   buildBatchAlignmentPrompt,
-  estimatePromptTokens,
+  buildBatchAlignmentUserPayload,
   parseAlignmentModelJson
 } from './promptBuilder'
 import type { AlignmentMatchRow, AlignmentMatchValidated } from './types'
-import {
-  buildAlignmentBatchPipelineDiagnostics,
-  logAlignmentBatchPipelineDiagnostics,
-  type AlignmentBatchPipelineDiagnostics
-} from './alignmentDiagnostics'
 import { pickBestStructuralAIForSubtitle } from './applyPolicy'
 import { finalizeBatchAlignment } from './sequentialAlignment'
-import {
-  buildValidationWarnings,
-  validateAlignmentResult
-} from './validation'
-import type { CandidateSegmentGroup } from '../../types'
+import { buildValidationWarnings, validateAlignmentResult } from './validation'
 
+function excerptText(text: string | null | undefined, maxLen: number): string | null {
+  const t = text?.trim()
+  if (!t) return null
+  return t.length > maxLen ? `${t.slice(0, maxLen)}…` : t
+}
+
+/** 小批调试：仅含必要诊断字段（不影响主流程）。 */
 export interface SmallBatchAlignmentDebug {
-  promptTokenEstimate: number
+  promptPreview: string
   rawResponse: string
-  parseError: string | null
-  parsedJson: string | null
-  latencyMs: number
-  usagePromptTokens: number | null
-  candidateGroupCount: number
-  englishPoolSize: number
-  englishCursor: number
-  validationWarnings: string[]
-  localContextLabel: string
-  /** 单批完整 pipeline 快照（与控制台 `[alignment-pipeline]` 一致）。 */
-  pipelineTrace?: AlignmentBatchPipelineDiagnostics | null
+  validationResult: string[]
+  localEnglishExcerpt: string | null
 }
 
 export interface SmallBatchAlignmentSuccess {
@@ -48,6 +37,8 @@ export interface SmallBatchAlignmentSuccess {
   validated: AlignmentMatchValidated[]
   applyable: AlignmentMatchRow[]
   report: ReturnType<typeof buildAlignmentReport>
+  englishCursor: number
+  englishPoolSize: number
   debug: SmallBatchAlignmentDebug
 }
 
@@ -63,8 +54,6 @@ export interface RunSmallBatchAlignmentInput {
   model: string
   batchSize?: number
   confidenceThresholdPct?: number
-  /** 整文件模式下前序批次已占用的 segment，避免跨批重复。 */
-  usedSegmentIdsGlobal?: Set<string>
 }
 
 export async function runSmallBatchAlignment(
@@ -99,10 +88,28 @@ export async function runSmallBatchAlignment(
       ? Math.min(input.englishCursor, engPool.length - 1)
       : resolveSandboxEnglishCursor(engPool.length, startIdx, input.subtitles.length, DEFAULT_GROUP_WINDOW)
 
+  const localEnglishContext = buildLocalEnglishContextBlock({
+    englishSegments: engPool,
+    cursor
+  })
+  const localEnglishExcerpt = excerptText(localEnglishContext?.text, 600)
+
+  const promptSubs = batch.map((l, i) => ({
+    subtitleId: l.id,
+    orderIndex: i + 1,
+    chinese: l.chinese
+  }))
+
   const candidateGroups = buildCandidateGroups({
     englishSegments: engPool,
     cursor,
     windowSize: DEFAULT_GROUP_WINDOW
+  })
+
+  const promptPreview = buildBatchAlignmentUserPayload({
+    subtitles: promptSubs,
+    candidateGroups,
+    localEnglishContext
   })
 
   if (candidateGroups.length === 0) {
@@ -110,40 +117,19 @@ export async function runSmallBatchAlignment(
       ok: false,
       error: '当前游标窗口内无法组成英文候选组。',
       debug: {
-        promptTokenEstimate: 0,
+        promptPreview,
         rawResponse: '',
-        parseError: null,
-        parsedJson: null,
-        latencyMs: 0,
-        usagePromptTokens: null,
-        candidateGroupCount: 0,
-        englishPoolSize: engPool.length,
-        englishCursor: cursor,
-        validationWarnings: [],
-        localContextLabel: '—'
+        validationResult: ['No candidate groups in window.'],
+        localEnglishExcerpt
       }
     }
   }
 
-  const localEnglishContext = buildLocalEnglishContextBlock({
-    englishSegments: engPool,
-    cursor
-  })
-  const localContextLabel = localEnglishContext
-    ? `pool[${localEnglishContext.startSegmentIndex}…${localEnglishContext.endSegmentIndex}] · ${localEnglishContext.segmentCount} segs`
-    : '—'
-
-  const promptSubs = batch.map((l, i) => ({
-    subtitleId: l.id,
-    orderIndex: i + 1,
-    chinese: l.chinese
-  }))
-  const { messages, promptCharCount } = buildBatchAlignmentPrompt({
+  const { messages } = buildBatchAlignmentPrompt({
     subtitles: promptSubs,
     candidateGroups,
     localEnglishContext
   })
-  const est = estimatePromptTokens(messages.map((m) => m.content).join('\n'))
 
   const api = await bridge.alignDeepSeekBatch({ model: input.model, messages })
   if (!api.ok) {
@@ -151,39 +137,24 @@ export async function runSmallBatchAlignment(
       ok: false,
       error: api.error,
       debug: {
-        promptTokenEstimate: est,
+        promptPreview,
         rawResponse: '',
-        parseError: null,
-        parsedJson: null,
-        latencyMs: 0,
-        usagePromptTokens: null,
-        candidateGroupCount: candidateGroups.length,
-        englishPoolSize: engPool.length,
-        englishCursor: cursor,
-        validationWarnings: [],
-        localContextLabel
+        validationResult: [],
+        localEnglishExcerpt
       }
     }
   }
 
-  const usagePt = api.usage?.prompt_tokens ?? null
   const parsed = parseAlignmentModelJson(api.rawText)
   if (!parsed.ok) {
     return {
       ok: false,
       error: parsed.error,
       debug: {
-        promptTokenEstimate: est,
+        promptPreview,
         rawResponse: api.rawText,
-        parseError: parsed.error,
-        parsedJson: null,
-        latencyMs: api.latencyMs,
-        usagePromptTokens: usagePt,
-        candidateGroupCount: candidateGroups.length,
-        englishPoolSize: engPool.length,
-        englishCursor: cursor,
-        validationWarnings: [],
-        localContextLabel
+        validationResult: [`parse: ${parsed.error}`],
+        localEnglishExcerpt
       }
     }
   }
@@ -193,21 +164,25 @@ export async function runSmallBatchAlignment(
     result: parsed.data.matches,
     candidateGroups,
     expectedSubtitleIds: batchSubtitleIds,
-    usedSegmentIdsGlobal: input.usedSegmentIdsGlobal
+    alignmentWindow: {
+      englishCursor: cursor,
+      poolLength: engPool.length,
+      windowSize: DEFAULT_GROUP_WINDOW
+    }
   })
-  const thresholdPct = input.confidenceThresholdPct ?? 60
-  const { validated, drift, repairedSubtitleIds } = finalizeBatchAlignment(
+  const { validated, drift } = finalizeBatchAlignment(
     rawValidated,
     batchSubtitleIds,
     candidateGroups,
-    { usedSegmentIdsGlobal: input.usedSegmentIdsGlobal, englishCursor: cursor }
+    {
+      englishCursor: cursor,
+      poolLength: engPool.length,
+      windowSize: DEFAULT_GROUP_WINDOW
+    }
   )
-  const validationWarnings = [
+  const validationResult = [
     ...buildValidationWarnings(validated),
-    ...(drift.drift ? [`alignment_drift: ${drift.reasons.join('; ')}`] : []),
-    ...(repairedSubtitleIds.length > 0
-      ? [`sequential_fallback suggestions (not auto-applied): ${repairedSubtitleIds.join(', ')}`]
-      : [])
+    ...(drift.drift ? [`alignment_drift: ${drift.reasons.join('; ')}`] : [])
   ]
   const applyable: AlignmentMatchRow[] = []
   for (const id of batchSubtitleIds) {
@@ -230,21 +205,6 @@ export async function runSmallBatchAlignment(
     drift
   })
 
-  const pipelineTrace = buildAlignmentBatchPipelineDiagnostics({
-    batch,
-    engPool,
-    cursor,
-    windowSize: DEFAULT_GROUP_WINDOW,
-    localEnglishContext,
-    candidateGroups,
-    messages,
-    rawResponse: api.rawText,
-    validated,
-    batchSubtitleIds,
-    thresholdPct
-  })
-  logAlignmentBatchPipelineDiagnostics(pipelineTrace)
-
   return {
     ok: true,
     batch,
@@ -253,19 +213,13 @@ export async function runSmallBatchAlignment(
     validated,
     applyable,
     report,
+    englishCursor: cursor,
+    englishPoolSize: engPool.length,
     debug: {
-      promptTokenEstimate: est,
+      promptPreview,
       rawResponse: api.rawText,
-      parseError: null,
-      parsedJson: JSON.stringify({ matches: validated, report }, null, 2),
-      latencyMs: api.latencyMs,
-      usagePromptTokens: usagePt,
-      candidateGroupCount: candidateGroups.length,
-      englishPoolSize: engPool.length,
-      englishCursor: cursor,
-      validationWarnings,
-      localContextLabel,
-      pipelineTrace
+      validationResult,
+      localEnglishExcerpt
     }
   }
 }

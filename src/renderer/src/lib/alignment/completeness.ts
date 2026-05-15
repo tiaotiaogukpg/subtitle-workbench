@@ -19,6 +19,7 @@ export interface AlignmentReport {
   batchSubtitleCount: number
   matchedSubtitleCount: number
   missingSubtitleIds: number[]
+  /** 批内窗口中同一 segment 被多行可应用结果使用的次数（仅统计，不阻断对齐）。 */
   duplicateSegmentIds: string[]
   unusedSegmentIdsInWindow: string[]
   validationWarningCount: number
@@ -30,7 +31,6 @@ export interface AlignmentReport {
   needsReviewCount: number
   alignmentDrift: boolean
   alignmentDriftReasons: string[]
-  sequentialFallbackCount: number
 }
 
 export function checkSubtitleCompleteness(
@@ -85,9 +85,6 @@ export function buildAlignmentReport(
     return pct < threshold
   }).length
   const needsReviewCount = missingSubtitleIds.length + invalidResultCount
-  const sequentialFallbackCount = validated.filter((v) =>
-    v.validationFlags.includes('sequential_fallback')
-  ).length
 
   return {
     batchSubtitleCount: expectedSubtitleIds.length,
@@ -100,8 +97,7 @@ export function buildAlignmentReport(
     lowConfidenceCount,
     needsReviewCount,
     alignmentDrift: options?.drift?.drift ?? false,
-    alignmentDriftReasons: options?.drift?.reasons ?? [],
-    sequentialFallbackCount
+    alignmentDriftReasons: options?.drift?.reasons ?? []
   }
 }
 

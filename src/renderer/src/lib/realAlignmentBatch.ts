@@ -9,10 +9,10 @@ export {
   buildBatchAlignmentPrompt as buildAlignmentMessages,
   buildBatchAlignmentUserPayload as buildAlignmentUserPayload,
   parseAlignmentModelJson,
-  estimatePromptTokens,
   confidenceToPercent,
   statusFromConfidencePct,
   type AlignmentPromptSubtitle,
+  type BatchAlignmentPromptInput,
   type AlignmentMatchRow as DeepSeekAlignmentMatchRow,
   type AlignmentModelResponseShape as DeepSeekAlignmentResponseShape
 } from './alignment'

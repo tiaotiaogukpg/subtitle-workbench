@@ -5,7 +5,6 @@ import {
   statusFromConfidencePct,
   type AlignmentMatchRow
 } from '../lib/alignment'
-import { initialSubtitleLines } from '../mocks/subtitles'
 import type { CandidateMatch, SubtitleLine, SubtitleStatus } from '../types'
 import { useScriptPoolStore } from './scriptPoolStore'
 
@@ -43,6 +42,8 @@ export interface SubtitleStoreActions {
       problems: string[]
     }>
   ) => void
+  /** Drift 跳过本批：全部 needs_review，不写入英文。 */
+  markAlignmentDriftSkipBatch: (subtitleIds: number[]) => void
 }
 
 export type SubtitleStore = SubtitleStoreState & SubtitleStoreActions
@@ -54,7 +55,7 @@ function resolveCurrentIdAfterListChange(list: SubtitleLine[], prevId: number | 
 }
 
 export const useSubtitleStore = create<SubtitleStore>((set, get) => ({
-  subtitles: initialSubtitleLines,
+  subtitles: [],
   currentSubtitleId: null,
 
   setSubtitles: (subtitles) =>
@@ -199,6 +200,24 @@ export const useSubtitleStore = create<SubtitleStore>((set, get) => ({
           problems: mergeAlignmentProblems(line.problems, entry.problems)
         }
       })
+    }))
+  },
+
+  markAlignmentDriftSkipBatch: (subtitleIds) => {
+    if (subtitleIds.length === 0) return
+    const idSet = new Set(subtitleIds)
+    const problem = 'ai_alignment:drift_skip_batch'
+    set((s) => ({
+      subtitles: s.subtitles.map((line) =>
+        idSet.has(line.id)
+          ? {
+              ...line,
+              confidence: 0,
+              status: 'needs_review' as SubtitleStatus,
+              problems: line.problems.includes(problem) ? line.problems : [...line.problems, problem]
+            }
+          : line
+      )
     }))
   }
 }))

@@ -1,6 +1,7 @@
 import { containsChinese } from '../language'
 import type { CandidateSegmentGroup } from '../../types'
-import { englishMatchesGroupText } from './candidateGroups'
+import { englishMatchesGroupText, getEnglishPoolWindowBounds } from './candidateGroups'
+import { DEFAULT_GROUP_WINDOW } from './constants'
 import { computeMatchApplyable } from './sequentialAlignment'
 import type {
   AlignmentMatchRow,
@@ -12,11 +13,15 @@ export interface ValidateAlignmentResultInput {
   result: AlignmentMatchRow[]
   candidateGroups: CandidateSegmentGroup[]
   expectedSubtitleIds: number[]
-  usedSegmentIdsGlobal?: Set<string>
+  /** 与 DeepSeek 候选窗口一致时校验 group 是否在池窗口内。 */
+  alignmentWindow?: { englishCursor: number; poolLength: number; windowSize?: number }
 }
 
-function segmentIdsEqual(a: string[], b: string[]): boolean {
-  return a.length === b.length && a.every((x, i) => x === b[i])
+function segmentIdsEqualAsSet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false
+  const sa = [...a].sort()
+  const sb = [...b].sort()
+  return sa.every((x, i) => x === sb[i])
 }
 
 function allIdsInGroups(groups: CandidateSegmentGroup[]): Set<string> {
@@ -25,52 +30,34 @@ function allIdsInGroups(groups: CandidateSegmentGroup[]): Set<string> {
   return s
 }
 
-function applyDuplicateFlags(
-  rows: AlignmentMatchValidated[],
-  usedGlobal?: Set<string>
-): AlignmentMatchValidated[] {
-  let next = rows
-  if (usedGlobal?.size) {
-    next = next.map((r) => {
-      if (r.matchedSegmentIds.some((id) => usedGlobal.has(id))) {
-        const flags: AlignmentMatchValidationFlag[] = [
-          ...new Set<AlignmentMatchValidationFlag>([...r.validationFlags, 'duplicate_segment'])
-        ]
-        return { ...r, validationFlags: flags, applyable: computeMatchApplyable(flags) }
-      }
-      return r
-    })
-  }
-  const counts = new Map<string, number>()
-  for (const r of next) {
-    for (const id of r.matchedSegmentIds) counts.set(id, (counts.get(id) ?? 0) + 1)
-  }
-  const dup = new Set([...counts.entries()].filter(([, c]) => c > 1).map(([id]) => id))
-  if (!dup.size) return next
-  return next.map((r) => {
-    if (!r.matchedSegmentIds.some((id) => dup.has(id))) return r
-    const flags: AlignmentMatchValidationFlag[] = [
-      ...new Set<AlignmentMatchValidationFlag>([...r.validationFlags, 'duplicate_segment'])
-    ]
-    return { ...r, validationFlags: flags, applyable: computeMatchApplyable(flags) }
-  })
-}
-
 export function validateAlignmentResult(input: ValidateAlignmentResultInput): AlignmentMatchValidated[] {
-  const { result, candidateGroups, expectedSubtitleIds, usedSegmentIdsGlobal } = input
+  const { result, candidateGroups, expectedSubtitleIds, alignmentWindow } = input
   const groupsById = new Map(candidateGroups.map((g) => [g.id, g]))
   const allowedIds = allIdsInGroups(candidateGroups)
   const expected = new Set(expectedSubtitleIds)
 
+  const win =
+    alignmentWindow && alignmentWindow.poolLength > 0
+      ? getEnglishPoolWindowBounds(
+          alignmentWindow.poolLength,
+          alignmentWindow.englishCursor,
+          alignmentWindow.windowSize ?? DEFAULT_GROUP_WINDOW
+        )
+      : null
+
   const base = result.map((m) => {
     const flags: AlignmentMatchValidationFlag[] = []
+    if (!m.english.trim()) flags.push('empty_english')
     if (containsChinese(m.english)) flags.push('invalid_candidate')
 
     const g = groupsById.get(m.groupId)
     if (!g) flags.push('invalid_group_id')
     else {
-      if (!segmentIdsEqual(m.matchedSegmentIds, g.segmentIds)) flags.push('invalid_segment_id')
+      if (!segmentIdsEqualAsSet(m.matchedSegmentIds, g.segmentIds)) flags.push('invalid_segment_id')
       if (!englishMatchesGroupText(m.english, g.text)) flags.push('english_not_from_group')
+      if (win && (g.startSegmentIndex < win.windowStart || g.endSegmentIndex > win.windowEnd)) {
+        flags.push('invalid_group_id')
+      }
     }
 
     if (m.matchedSegmentIds.length === 0) flags.push('invalid_segment_id')
@@ -96,7 +83,7 @@ export function validateAlignmentResult(input: ValidateAlignmentResultInput): Al
     }
   }
 
-  return applyDuplicateFlags([...base, ...missingRows], usedSegmentIdsGlobal)
+  return [...base, ...missingRows]
 }
 
 export function buildValidationWarnings(validated: AlignmentMatchValidated[]): string[] {
@@ -107,14 +94,4 @@ export function buildValidationWarnings(validated: AlignmentMatchValidated[]): s
     }
   })
   return w
-}
-
-export function pickBestApplyablePerSubtitle(
-  validated: AlignmentMatchValidated[],
-  subtitleId: number
-): AlignmentMatchValidated | null {
-  const rows = validated.filter((v) => v.subtitleId === subtitleId && v.applyable)
-  if (!rows.length) return null
-  rows.sort((a, b) => b.confidence - a.confidence)
-  return rows[0] ?? null
 }

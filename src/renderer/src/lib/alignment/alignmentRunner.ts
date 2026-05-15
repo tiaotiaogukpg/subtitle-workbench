@@ -14,7 +14,10 @@ import {
 } from './index'
 import { pickSubtitleBatchSlice } from './batchSelection'
 import { useAlignmentPreviewStore } from '../../store/alignmentPreviewStore'
-import { useAlignmentSessionStore } from '../../store/alignmentSessionStore'
+import {
+  useAlignmentSessionStore,
+  type FullFileDriftContinuation
+} from '../../store/alignmentSessionStore'
 import { useScriptPoolStore } from '../../store/scriptPoolStore'
 import { useSubtitleStore } from '../../store/subtitleStore'
 import type { AiAlignmentRunConfig, CandidateSegmentGroup, SubtitleStatus } from '../../types'
@@ -68,7 +71,7 @@ function applyFullFileBatchResults(
     problems: string[]
     candidates: import('../../types').CandidateMatch[]
   }> = []
-  const fallbackOnly: Array<{
+  const linesWithoutAiWrite: Array<{
     subtitleId: number
     candidates?: import('../../types').CandidateMatch[]
     problems: string[]
@@ -88,10 +91,7 @@ function applyFullFileBatchResults(
     if (best) {
       const { validationFlags: _v, applyable: _a, ...row } = best
       const status = deriveStatusAfterAI(best, thresholdPct)
-      let problems = readableProblemsForAIRow(best, thresholdPct)
-      if (status === 'needs_review' && problems.length === 0) {
-        problems = [...problems, 'This line needs manual review.']
-      }
+      const problems = readableProblemsForAIRow(best, thresholdPct)
       const candidates = buildCandidatesForSubtitle(
         rowsForSub,
         best,
@@ -102,7 +102,7 @@ function applyFullFileBatchResults(
       )
       aiEntries.push({ subtitleId, primary: row, status, problems, candidates })
     } else {
-      fallbackOnly.push({
+      linesWithoutAiWrite.push({
         subtitleId,
         candidates: buildCandidatesForSubtitle(
           rowsForSub,
@@ -120,11 +120,11 @@ function applyFullFileBatchResults(
   if (aiEntries.length > 0) {
     subtitleStore.applyFullFileAIMatchBatch(aiEntries)
   }
-  if (fallbackOnly.length > 0) {
+  if (linesWithoutAiWrite.length > 0) {
     const skip = new Set(aiEntries.map((e) => e.subtitleId))
-    const onlyFallback = fallbackOnly.filter((f) => !skip.has(f.subtitleId))
-    if (onlyFallback.length > 0) {
-      subtitleStore.applyAlignmentReviewStates(onlyFallback)
+    const onlyReview = linesWithoutAiWrite.filter((f) => !skip.has(f.subtitleId))
+    if (onlyReview.length > 0) {
+      subtitleStore.applyAlignmentReviewStates(onlyReview)
     }
   }
 
@@ -198,8 +198,8 @@ async function runSingleBatchTest(
     result.validated,
     config.confidenceThreshold,
     result.candidateGroups,
-    result.debug.englishCursor,
-    result.debug.englishPoolSize
+    result.englishCursor,
+    result.englishPoolSize
   )
 
   useAlignmentPreviewStore.getState().setSuccess({
@@ -207,7 +207,6 @@ async function runSingleBatchTest(
     applyable: result.applyable,
     candidateGroups: result.candidateGroups,
     batchSubtitleIds: result.batchSubtitleIds,
-    segmentIdsInContext: [...new Set(result.candidateGroups.flatMap((g) => g.segmentIds))],
     report: result.report,
     debug: result.debug
   })
@@ -218,7 +217,7 @@ async function runSingleBatchTest(
     batchLabel,
     processingSubtitleId: null,
     processedSubtitleCount: result.batch.length,
-    englishCursor: result.debug.englishCursor,
+    englishCursor: result.englishCursor,
     matchedDelta: stats.matched,
     needsReviewDelta: stats.needsReview,
     failedDelta: stats.failed
@@ -231,7 +230,13 @@ async function runSingleBatchTest(
 
 async function runFullFileAlignment(
   config: AiAlignmentRunConfig,
-  generation: number
+  generation: number,
+  resume?: {
+    subtitleStart: number
+    batchIndexBeforeIncrement: number
+    segmentUsage: Map<string, number>
+    usedSegmentIdsGlobal: Set<string>
+  }
 ): Promise<void> {
   const session = useAlignmentSessionStore.getState()
   const subtitles = useSubtitleStore.getState().subtitles
@@ -240,10 +245,10 @@ async function runFullFileAlignment(
   const batchSize = config.batchSize
   const totalBatches = Math.max(1, Math.ceil(subtitles.length / batchSize))
 
-  let subtitleStart = 0
-  let batchIndex = 0
-  const segmentUsage = new Map<string, number>()
-  const usedSegmentIdsGlobal = new Set<string>()
+  let subtitleStart = resume?.subtitleStart ?? 0
+  let batchIndex = resume?.batchIndexBeforeIncrement ?? 0
+  const segmentUsage = resume?.segmentUsage ?? new Map<string, number>()
+  const usedSegmentIdsGlobal = resume?.usedSegmentIdsGlobal ?? new Set<string>()
 
   while (subtitleStart < subtitles.length) {
     if (generation !== runGeneration) return
@@ -279,8 +284,7 @@ async function runFullFileAlignment(
       englishCursor,
       model: config.model,
       batchSize: batch.length,
-      confidenceThresholdPct: config.confidenceThreshold,
-      usedSegmentIdsGlobal
+      confidenceThresholdPct: config.confidenceThreshold
     })
 
     if (generation !== runGeneration) return
@@ -299,12 +303,25 @@ async function runFullFileAlignment(
         applyable: result.applyable,
         candidateGroups: result.candidateGroups,
         batchSubtitleIds: result.batchSubtitleIds,
-        segmentIdsInContext: [...new Set(result.candidateGroups.flatMap((g) => g.segmentIds))],
         report: result.report,
         debug: result.debug
       })
-      session.failSession(
-        '整文件对齐已暂停：本批检测到 alignment drift。请检查 English cursor、字幕与英文池对应关系后重试。'
+      session.patchProgress({ englishCursor: result.englishCursor })
+      useAlignmentPreviewStore.getState().setEnglishCursor(result.englishCursor)
+
+      const cont: FullFileDriftContinuation = {
+        subtitleStart,
+        failedBatchSize: batch.length,
+        lastBatchIndexUsed: batchIndex,
+        totalBatches,
+        segmentUsage: Object.fromEntries(segmentUsage),
+        usedSegmentIdsGlobal: [...usedSegmentIdsGlobal],
+        batchSubtitleIds: result.batchSubtitleIds,
+        batchLabel
+      }
+      session.enterDriftRecovery(
+        cont,
+        '本批检测到 alignment drift，已进入人工恢复。请校正 English cursor 后重试本批、从当前 cursor 继续整文件、跳过本批或停止。'
       )
       return
     }
@@ -314,7 +331,7 @@ async function runFullFileAlignment(
       result.validated,
       config.confidenceThreshold,
       result.candidateGroups,
-      result.debug.englishCursor,
+      result.englishCursor,
       poolLen
     )
     trackSegmentUsage(segmentUsage, applied)
@@ -346,7 +363,7 @@ async function runFullFileAlignment(
       result.validated,
       config.confidenceThreshold,
       result.candidateGroups,
-      result.debug.englishCursor,
+      result.englishCursor,
       poolLen
     )
 
@@ -355,7 +372,6 @@ async function runFullFileAlignment(
       applyable: result.applyable,
       candidateGroups: result.candidateGroups,
       batchSubtitleIds: result.batchSubtitleIds,
-      segmentIdsInContext: [...new Set(result.candidateGroups.flatMap((g) => g.segmentIds))],
       report: result.report,
       debug: result.debug
     })
@@ -402,7 +418,9 @@ export function startAlignmentSession(config: AiAlignmentRunConfig, apiKey: stri
   if (blocked) return blocked
 
   const status = useAlignmentSessionStore.getState().status
-  if (status === 'running') return '已有对齐任务正在运行。'
+  if (status === 'running' || status === 'paused' || status === 'drift_recovery') {
+    return '已有对齐任务正在运行或处于 drift 恢复中。'
+  }
 
   const subtitles = useSubtitleStore.getState().subtitles
   const totalBatches =
@@ -443,4 +461,155 @@ export function pauseAlignmentSession(): void {
 
 export function resumeAlignmentSession(): void {
   useAlignmentSessionStore.getState().setResumed()
+}
+
+/** 从 drift 恢复：用当前预览中的 English cursor 重新跑当前批并继续整文件（会写入本批）。 */
+export function resumeFullFileFromDrift(): string | null {
+  const session = useAlignmentSessionStore.getState()
+  if (session.status !== 'drift_recovery' || !session.driftContinuation) {
+    return '当前不在 drift 恢复状态。'
+  }
+  const c = session.driftContinuation
+  const config = session.activeConfig
+  if (!config || config.mode !== 'full_file') return '无效会话配置。'
+
+  useAlignmentSessionStore.getState().patchProgress({
+    status: 'running',
+    lastSummary: '正从当前 English cursor 继续整文件对齐…',
+    lastError: null
+  })
+  useAlignmentSessionStore.getState().clearDriftContinuation()
+
+  runGeneration += 1
+  const generation = runGeneration
+  void (async () => {
+    try {
+      await runFullFileAlignment(config, generation, {
+        subtitleStart: c.subtitleStart,
+        batchIndexBeforeIncrement: c.lastBatchIndexUsed - 1,
+        segmentUsage: new Map(Object.entries(c.segmentUsage)),
+        usedSegmentIdsGlobal: new Set(c.usedSegmentIdsGlobal)
+      })
+    } catch (e) {
+      if (generation !== runGeneration) return
+      const msg = e instanceof Error ? e.message : String(e)
+      useAlignmentPreviewStore.getState().setRunError(msg, null)
+      useAlignmentSessionStore.getState().failSession(msg)
+    }
+  })()
+  return null
+}
+
+/** 跳过本批（全部 needs_review），从下一批继续整文件。 */
+export function skipDriftBatchAndContinue(): string | null {
+  const session = useAlignmentSessionStore.getState()
+  if (session.status !== 'drift_recovery' || !session.driftContinuation) {
+    return '当前不在 drift 恢复状态。'
+  }
+  const c = session.driftContinuation
+  const config = session.activeConfig
+  if (!config || config.mode !== 'full_file') return '无效会话配置。'
+
+  useSubtitleStore.getState().markAlignmentDriftSkipBatch(c.batchSubtitleIds)
+
+  const nextStart = c.subtitleStart + c.failedBatchSize
+
+  useAlignmentSessionStore.getState().noteBatchProgress({
+    batchIndex: c.lastBatchIndexUsed,
+    totalBatches: c.totalBatches,
+    batchLabel: `${c.batchLabel}（已跳过）`,
+    processingSubtitleId: null,
+    processedSubtitleCount: nextStart,
+    englishCursor: useAlignmentPreviewStore.getState().englishCursor,
+    matchedDelta: 0,
+    needsReviewDelta: c.batchSubtitleIds.length,
+    failedDelta: 0
+  })
+
+  useAlignmentSessionStore.getState().patchProgress({
+    status: 'running',
+    lastSummary: '已跳过本批（已标记需复查），继续后续批次…',
+    lastError: null
+  })
+  useAlignmentSessionStore.getState().clearDriftContinuation()
+
+  runGeneration += 1
+  const generation = runGeneration
+  void (async () => {
+    try {
+      await runFullFileAlignment(config, generation, {
+        subtitleStart: nextStart,
+        batchIndexBeforeIncrement: c.lastBatchIndexUsed,
+        segmentUsage: new Map(Object.entries(c.segmentUsage)),
+        usedSegmentIdsGlobal: new Set(c.usedSegmentIdsGlobal)
+      })
+    } catch (e) {
+      if (generation !== runGeneration) return
+      const msg = e instanceof Error ? e.message : String(e)
+      useAlignmentPreviewStore.getState().setRunError(msg, null)
+      useAlignmentSessionStore.getState().failSession(msg)
+    }
+  })()
+  return null
+}
+
+export function stopFullFileAlignmentFromDrift(): void {
+  useAlignmentSessionStore.getState().stopSessionAsUserCancelled()
+}
+
+/** 仅重试 DeepSeek 请求，不写入字幕、不退出 drift 状态。 */
+export async function retryDriftBatchAlignment(): Promise<string | null> {
+  const session = useAlignmentSessionStore.getState()
+  if (session.status !== 'drift_recovery' || !session.driftContinuation) {
+    return '当前不在 drift 恢复状态。'
+  }
+  const c = session.driftContinuation
+  const config = session.activeConfig
+  if (!config || config.mode !== 'full_file') return '无效会话配置。'
+
+  const subtitles = useSubtitleStore.getState().subtitles
+  const segments = useScriptPoolStore.getState().segments
+  const englishCursor = useAlignmentPreviewStore.getState().englishCursor
+  const batch = pickSubtitleBatchSlice(subtitles, c.subtitleStart, c.failedBatchSize)
+  if (batch.length === 0) return '无法重建本批字幕。'
+
+  const result = await runSmallBatchAlignment({
+    subtitles,
+    currentSubtitleId: batch[0]!.id,
+    segments,
+    englishCursor,
+    model: config.model,
+    batchSize: batch.length,
+    confidenceThresholdPct: config.confidenceThreshold
+  })
+
+  if (!result.ok) {
+    useAlignmentPreviewStore.getState().setRunError(result.error, result.debug)
+    return result.error
+  }
+
+  useAlignmentPreviewStore.getState().setSuccess({
+    validated: result.validated,
+    applyable: result.applyable,
+    candidateGroups: result.candidateGroups,
+    batchSubtitleIds: result.batchSubtitleIds,
+    report: result.report,
+    debug: result.debug
+  })
+  useAlignmentSessionStore.getState().patchProgress({
+    englishCursor: result.englishCursor,
+    lastError: null
+  })
+  useAlignmentPreviewStore.getState().setEnglishCursor(result.englishCursor)
+
+  if (result.report.alignmentDrift) {
+    useAlignmentSessionStore.getState().patchProgress({
+      lastSummary: '重试后仍存在 alignment drift，请继续调整 cursor 或跳过本批。'
+    })
+  } else {
+    useAlignmentSessionStore.getState().patchProgress({
+      lastSummary: '重试完成：未再检测到 drift。可点击「从当前 cursor 继续」写入本批并推进整文件。'
+    })
+  }
+  return null
 }

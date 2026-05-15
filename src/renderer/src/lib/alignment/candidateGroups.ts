@@ -2,6 +2,13 @@ import type { CandidateSegmentGroup, ScriptSegment } from '../../types'
 import { isPureEnglishText } from '../language'
 import { MAX_GROUP_CHARS, MAX_GROUP_SEGMENTS, MAX_GROUP_WORDS } from './constants'
 
+/**
+ * 合并文本像「陈述收束 + 下一句采访问句」时不生成该候选（避免跨题粘段）。
+ * 不做语义解析，仅用轻量模式匹配。
+ */
+const GLUED_ANSWER_THEN_QUESTION =
+  /[.!?]["']?\s+(Which|What|Who|Whom|How|Why|If|Can|Is|Are|Do|Does|Did|When|Where)\b/i
+
 export interface BuildCandidateGroupsOptions {
   englishSegments: ScriptSegment[]
   cursor: number
@@ -67,6 +74,7 @@ export function buildCandidateGroups(options: BuildCandidateGroupsOptions): Cand
       if (segs.some((s) => s.language !== 'english' || !isPureEnglishText(s.text))) continue
       const segmentIds = segs.map((s) => s.id)
       const text = normalizeGroupText(segs.map((s) => s.text.trim()).join(' '))
+      if (GLUED_ANSWER_THEN_QUESTION.test(text)) continue
       const wordCount = countWords(text)
       const charCount = text.length
       if (wordCount > maxWords || charCount > maxChars) continue

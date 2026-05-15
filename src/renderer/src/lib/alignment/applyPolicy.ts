@@ -4,18 +4,13 @@ import { DEFAULT_GROUP_WINDOW } from './constants'
 import type { AlignmentMatchValidated, AlignmentMatchValidationFlag } from './types'
 import { confidenceToPercent } from './types'
 
-/** 批内首条字幕允许的最大英文池起点偏移（相对 englishCursor）。 */
-export const BATCH_START_MAX_SEGMENT_OFFSET = 2
-
-/** 不满足则不能把 DeepSeek 行写入 english（但仍可走 fallback 候选）。 */
+/** 不满足则不能把 DeepSeek 行写入 english。 */
 const STRUCTURAL_NO_WRITE_FLAGS: AlignmentMatchValidationFlag[] = [
   'missing_subtitle',
-  'sequential_fallback',
   'invalid_candidate',
   'invalid_segment_id',
   'invalid_group_id',
   'english_not_from_group',
-  'duplicate_segment',
   'empty_english'
 ]
 
@@ -57,13 +52,6 @@ export function deriveStatusAfterAI(
   row: AlignmentMatchValidated,
   thresholdPct: number
 ): SubtitleStatus {
-  if (
-    row.validationFlags.includes('alignment_drift') ||
-    row.validationFlags.includes('segment_jump') ||
-    row.validationFlags.includes('segment_backward')
-  ) {
-    return 'needs_review'
-  }
   if (confidenceToPercent(row.confidence) < thresholdPct) {
     return 'low_confidence'
   }
@@ -79,26 +67,11 @@ export function readableProblemsForAIRow(
   if (confidenceToPercent(row.confidence) < thresholdPct) {
     out.push('AI confidence is low.')
   }
-  if (row.validationFlags.includes('alignment_drift')) {
-    out.push('Alignment may have drifted.')
-  }
-  if (
-    row.validationFlags.includes('segment_jump') ||
-    row.validationFlags.includes('segment_backward')
-  ) {
-    out.push('Alignment may have jumped in the transcript; listen back and edit if needed.')
-  }
-  if (row.validationFlags.includes('duplicate_segment')) {
-    out.push('Segment reuse conflict; please pick a candidate manually.')
-  }
   return out
 }
 
 export const ALIGNMENT_USER_READABLE_MESSAGES = new Set([
   'AI confidence is low.',
-  'Alignment may have drifted.',
-  'Alignment may have jumped in the transcript; listen back and edit if needed.',
-  'Segment reuse conflict; please pick a candidate manually.',
   'This line needs manual review.',
   'AI did not return a reliable match.'
 ])
@@ -112,9 +85,6 @@ export function formatProblemForDisplay(raw: string): string {
         return 'This line needs manual review.'
       case 'ai_alignment:alignment_drift':
         return 'Alignment may have drifted.'
-      case 'ai_alignment:segment_jump':
-      case 'ai_alignment:segment_backward':
-        return 'Alignment may have jumped in the transcript; listen back and edit if needed.'
       case 'ai_alignment:needs_review':
       case 'ai_alignment:no_match':
       case 'ai_alignment:omitted_by_model':
@@ -122,24 +92,21 @@ export function formatProblemForDisplay(raw: string): string {
         return 'AI did not return a reliable match.'
       case 'ai_alignment:empty_english':
         return 'AI did not return a reliable match.'
-      case 'ai_alignment:duplicate_segment':
-        return 'Segment reuse conflict; please pick a candidate manually.'
+      case 'ai_alignment:drift_skip_batch':
+        return '本批因对齐漂移被跳过；请在本批字幕上人工对齐。'
       case 'ai_alignment:invalid_group':
       case 'ai_alignment:invalid_segment':
       case 'ai_alignment:english_mismatch':
       case 'ai_alignment:invalid_candidate':
         return 'AI did not return a reliable match.'
       default:
-        return 'This line needs manual review.'
+        return '请在本行复查对齐结果。'
     }
   }
   return raw
 }
 
-export function validatedRowToCandidate(
-  row: AlignmentMatchValidated,
-  source: 'ai' | 'fallback'
-): CandidateMatch | null {
+export function validatedRowToCandidate(row: AlignmentMatchValidated): CandidateMatch | null {
   if (!row.english.trim()) return null
   return {
     id: crypto.randomUUID(),
@@ -147,7 +114,7 @@ export function validatedRowToCandidate(
     text: row.english.trim(),
     confidence: confidenceToPercent(row.confidence),
     groupId: row.groupId || undefined,
-    source
+    source: 'ai'
   }
 }
 
@@ -171,7 +138,7 @@ export function buildCandidatesForSubtitle(
   }
 
   if (primary) {
-    push(validatedRowToCandidate(primary, 'ai'))
+    push(validatedRowToCandidate(primary))
   }
 
   const aiOthers = [...rowsForSub]
@@ -183,13 +150,7 @@ export function buildCandidatesForSubtitle(
     .sort((a, b) => b.confidence - a.confidence)
 
   for (const r of aiOthers) {
-    push(validatedRowToCandidate(r, 'ai'))
-  }
-
-  for (const r of rowsForSub) {
-    if (r.validationFlags.includes('sequential_fallback')) {
-      push(validatedRowToCandidate(r, 'fallback'))
-    }
+    push(validatedRowToCandidate(r))
   }
 
   return out
