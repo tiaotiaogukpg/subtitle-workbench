@@ -1,16 +1,18 @@
-/** 小批量对齐：每批中文字幕条数。 */
+/** 允许后一条 spanStart 略早于前一条的容差（字符），用于顺序子串定位与 order 诊断。 */
+export const ORDER_SPAN_BACKTRACK_TOLERANCE = 12
+
+/** 两 span 较短者上，重叠长度占比超过此阈值则标 duplicate_span（且非完全相同区间）。 */
+export const SPAN_OVERLAP_DUPLICATE_RATIO = 0.45
+
+/** 批内相邻字幕 span 重叠超过该比例则标 adjacent_span_heavy_overlap。 */
+export const ADJACENT_SPAN_OVERLAP_RATIO = 0.45
+
+/** 小批量对齐：每批中文字幕条数（默认，可被设置覆盖）。 */
 export const SMALL_BATCH_SUBTITLE_COUNT = 5
 
-/** 英文池游标起窗口长度（含起点），用于候选组生成；应覆盖 local context 宽度。 */
-export const DEFAULT_GROUP_WINDOW = 36
-
-/** 整文件每批后 english 游标单次最多推进的池下标步长（防错配时 cursor 飞太远）。 */
-export const MAX_ENGLISH_CURSOR_ADVANCE_SEGMENTS = 14
+/** Debug 候选组列表最多条目数（仅写入 prompt 的 englishCandidateGroupsDebug）。 */
+export const DEBUG_CANDIDATE_GROUPS_MAX = 120
 
 export const MAX_GROUP_SEGMENTS = 3
 export const MAX_GROUP_WORDS = 20
 export const MAX_GROUP_CHARS = 130
-
-/** Prompt 只读 local English context：游标起连续纯英文片段数。 */
-export const LOCAL_ENGLISH_CONTEXT_MIN_SEGMENTS = 10
-export const LOCAL_ENGLISH_CONTEXT_MAX_SEGMENTS = 20

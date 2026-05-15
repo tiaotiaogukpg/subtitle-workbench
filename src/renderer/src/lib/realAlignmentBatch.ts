@@ -3,7 +3,6 @@
  */
 export {
   SMALL_BATCH_SUBTITLE_COUNT as REAL_ALIGN_SUBTITLE_COUNT,
-  DEFAULT_GROUP_WINDOW as REAL_ALIGN_SEGMENT_WINDOW,
   pickSmallBatchSubtitles as pickAlignmentSubtitleBatch,
   filterEnglishPoolSegments,
   buildBatchAlignmentPrompt as buildAlignmentMessages,

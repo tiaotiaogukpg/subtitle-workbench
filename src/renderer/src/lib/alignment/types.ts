@@ -14,15 +14,31 @@ export interface AlignmentMatchRow {
   english: string
   confidence: number
   reason: string
+  /** 模型可选；与 `localEnglishContextBlock` 对齐的元信息。 */
+  sourceContextIds?: string[]
+  /** `english` 在 space-normalized 的 `localEnglishContextBlock.text` 中的 [start, end) 字符区间。 */
+  spanStart?: number
+  spanEnd?: number
+  /** 模型原始给出的 local 区间（若有）。 */
+  declaredSpanStart?: number
+  declaredSpanEnd?: number
+  /** local span 映射到整池规范化串联串后的 [start,end)。 */
+  globalSpanStart?: number
+  globalSpanEnd?: number
 }
 
-/** 对齐结果最小校验标记（仅硬阻断写入）。 */
+/** 对齐结果校验标记（`ALIGNMENT_HARD_BLOCK_FLAGS` 子集为硬阻断；其余为警告）。 */
 export type AlignmentMatchValidationFlag =
   | 'invalid_candidate'
   | 'invalid_segment_id'
   | 'english_not_in_context'
   | 'non_contiguous_segments'
   | 'duplicate_english_in_batch'
+  | 'duplicate_span'
+  | 'span_mismatch'
+  | 'order_span_violation'
+  | 'identical_span_reuse'
+  | 'adjacent_span_heavy_overlap'
   | 'missing_subtitle'
   | 'empty_english'
 

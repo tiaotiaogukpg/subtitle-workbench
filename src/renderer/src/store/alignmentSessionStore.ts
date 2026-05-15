@@ -2,21 +2,6 @@ import { create } from 'zustand'
 import type { FullFileAlignmentReport } from '../lib/alignment/completeness'
 import type { AiAlignmentRunConfig } from '../types'
 
-/** 整文件对齐因 drift 暂停时保存的续跑上下文（不写入本批字幕）。 */
-export interface FullFileDriftContinuation {
-  /** 当前失败/待处理批在 subtitles 数组中的起始下标 */
-  subtitleStart: number
-  /** 本批字幕条数（与上次 runSmallBatchAlignment 一致） */
-  failedBatchSize: number
-  /** 与 noteBatchProgress 一致：本批失败时已递增到的 batch 序号（1-based） */
-  lastBatchIndexUsed: number
-  totalBatches: number
-  segmentUsage: Record<string, number>
-  usedSegmentIdsGlobal: string[]
-  batchSubtitleIds: number[]
-  batchLabel: string
-}
-
 export type AlignmentSessionStatus =
   | 'idle'
   | 'running'
@@ -24,7 +9,6 @@ export type AlignmentSessionStatus =
   | 'completed'
   | 'failed'
   | 'stopped'
-  | 'drift_recovery'
 
 export interface AlignmentSessionSnapshot {
   status: AlignmentSessionStatus
@@ -38,13 +22,10 @@ export interface AlignmentSessionSnapshot {
   sessionMatchedCount: number
   sessionNeedsReviewCount: number
   sessionFailedCount: number
-  englishCursor: number
   lastError: string | null
   lastSummary: string
   activeConfig: AiAlignmentRunConfig | null
   finalReport: FullFileAlignmentReport | null
-  /** 仅 `drift_recovery`：续跑所需状态 */
-  driftContinuation: FullFileDriftContinuation | null
 }
 
 interface AlignmentSessionActions {
@@ -58,7 +39,6 @@ interface AlignmentSessionActions {
     batchLabel: string
     processingSubtitleId: number | null
     processedSubtitleCount: number
-    englishCursor: number
     matchedDelta: number
     needsReviewDelta: number
     failedDelta: number
@@ -66,8 +46,6 @@ interface AlignmentSessionActions {
   completeSession: (summary: string, finalReport?: FullFileAlignmentReport | null) => void
   failSession: (error: string) => void
   resetSession: () => void
-  enterDriftRecovery: (continuation: FullFileDriftContinuation, summary: string) => void
-  clearDriftContinuation: () => void
   stopSessionAsUserCancelled: (summary?: string) => void
 }
 
@@ -83,12 +61,10 @@ const idleSnapshot: AlignmentSessionSnapshot = {
   sessionMatchedCount: 0,
   sessionNeedsReviewCount: 0,
   sessionFailedCount: 0,
-  englishCursor: 0,
   lastError: null,
   lastSummary: '尚未运行',
   activeConfig: null,
-  finalReport: null,
-  driftContinuation: null
+  finalReport: null
 }
 
 export const useAlignmentSessionStore = create<AlignmentSessionSnapshot & AlignmentSessionActions>(
@@ -105,9 +81,7 @@ export const useAlignmentSessionStore = create<AlignmentSessionSnapshot & Alignm
         currentBatchIndex: 0,
         currentBatchLabel: '准备中…',
         lastSummary: '对齐任务已启动',
-        lastError: null,
-        englishCursor: 0,
-        driftContinuation: null
+        lastError: null
       }),
 
     setPaused: () => {
@@ -128,7 +102,6 @@ export const useAlignmentSessionStore = create<AlignmentSessionSnapshot & Alignm
       batchLabel,
       processingSubtitleId,
       processedSubtitleCount,
-      englishCursor,
       matchedDelta,
       needsReviewDelta,
       failedDelta
@@ -142,7 +115,6 @@ export const useAlignmentSessionStore = create<AlignmentSessionSnapshot & Alignm
           currentBatchLabel: batchLabel,
           processingSubtitleId,
           processedSubtitleCount,
-          englishCursor,
           progressPct,
           sessionMatchedCount: s.sessionMatchedCount + matchedDelta,
           sessionNeedsReviewCount: s.sessionNeedsReviewCount + needsReviewDelta,
@@ -157,39 +129,25 @@ export const useAlignmentSessionStore = create<AlignmentSessionSnapshot & Alignm
         processingSubtitleId: null,
         lastSummary: summary,
         lastError: null,
-        finalReport: finalReport ?? s.finalReport,
-        driftContinuation: null
+        finalReport: finalReport ?? s.finalReport
       })),
 
     failSession: (error) =>
-      set((s) => ({
+      set({
         status: 'failed',
         processingSubtitleId: null,
         lastError: error,
-        lastSummary: `失败：${error}`,
-        driftContinuation: null
-      })),
-
-    resetSession: () => set({ ...idleSnapshot }),
-
-    enterDriftRecovery: (continuation, summary) =>
-      set({
-        status: 'drift_recovery',
-        processingSubtitleId: null,
-        lastError: null,
-        lastSummary: summary,
-        driftContinuation: continuation
+        lastSummary: `失败：${error}`
       }),
 
-    clearDriftContinuation: () => set({ driftContinuation: null }),
+    resetSession: () => set({ ...idleSnapshot }),
 
     stopSessionAsUserCancelled: (summary) =>
       set({
         status: 'stopped',
         processingSubtitleId: null,
         lastError: null,
-        lastSummary: summary ?? '整文件对齐已由用户停止；已保留此前已写入的结果。',
-        driftContinuation: null
+        lastSummary: summary ?? '整文件对齐已由用户停止；已保留此前已写入的结果。'
       })
   })
 )

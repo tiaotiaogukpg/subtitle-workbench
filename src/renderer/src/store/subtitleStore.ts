@@ -40,8 +40,8 @@ export interface SubtitleStoreActions {
       problems: string[]
     }>
   ) => void
-  /** Drift 跳过本批：全部 needs_review，不写入英文。 */
-  markAlignmentDriftSkipBatch: (subtitleIds: number[]) => void
+  /** 用户跳过本批：全部 needs_review，不写入英文。 */
+  markAlignmentBatchNeedsReview: (subtitleIds: number[]) => void
 }
 
 export type SubtitleStore = SubtitleStoreState & SubtitleStoreActions
@@ -151,10 +151,10 @@ export const useSubtitleStore = create<SubtitleStore>((set, get) => ({
     }))
   },
 
-  markAlignmentDriftSkipBatch: (subtitleIds) => {
+  markAlignmentBatchNeedsReview: (subtitleIds) => {
     if (subtitleIds.length === 0) return
     const idSet = new Set(subtitleIds)
-    const problem = 'ai_alignment:drift_skip_batch'
+    const problem = 'ai_alignment:user_skipped_batch'
     set((s) => ({
       subtitles: s.subtitles.map((line) =>
         idSet.has(line.id)

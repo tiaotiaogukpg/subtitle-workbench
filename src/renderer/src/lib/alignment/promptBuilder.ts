@@ -5,23 +5,25 @@ import type {
   BatchAlignmentPromptInput
 } from './types'
 
-const SYSTEM_PROMPT = `You are a bilingual subtitle alignment engine for consecutive interview subtitles.
+const SYSTEM_PROMPT = `You are aligning a consecutive Chinese subtitle batch to an English transcript.
 
-You receive localEnglishContextBlock: a read-only window of English transcript text (segmentIds + joined text). Your job is semantic slicing and semantic matching: for each Chinese subtitle line, choose the English phrase that best aligns with it.
+For each Chinese subtitle in the batch (fixed order):
+- Return the shortest English span that matches that subtitle.
+- english must be an EXACT contiguous substring of the provided English context string (single spaces between words; no paraphrase).
+- Do not translate. Do not invent words. Preserve English wording exactly.
+- Keep matches in forward order through the English context (later subtitles should not pull text from much earlier than previous lines unless unavoidable).
+- Do not assign the same English character span to two subtitles (no duplicate [spanStart, spanEnd)).
 
-Rules:
-1. For each subtitle, output english as an EXACT contiguous substring of localEnglishContextBlock.text (after normalizing your internal whitespace to single spaces). Do not paraphrase or translate.
-2. matchedSegmentIds must list every Script Pool segment id that your english span covers, in order, contiguous in the pool (infer from the substring position if unsure).
-3. groupId is optional; use "g_context" if you have no separate group id.
-4. Process subtitles in ascending orderIndex.
-5. Return exactly one match per subtitleId — no skips, no empty english.
-6. Prefer moving forward in transcript order across the batch when plausible.
-7. confidence is 0–1; reason is a short English explanation.
+If two Chinese subtitles relate to the same original English sentence:
+- Split the English into different non-overlapping spans for each subtitle.
+- Do not repeat the same full sentence for multiple subtitles.
 
-englishCandidateGroups (if present) is DEBUG ONLY — a per-segment slice list. Do NOT select from it. Slicing is your responsibility inside localEnglishContextBlock.text.
+Output JSON only. Each match object fields:
+subtitleId (number), english (string), spanStart (0-based int into englishContext.text), spanEnd (exclusive int), confidence (0-1 number), reason (short string).
 
-Output: JSON only. Shape:
-{"matches":[{"subtitleId":7,"groupId":"g_context","matchedSegmentIds":["…"],"english":"exact substring from context","confidence":0.91,"reason":"..."}]}`
+Do not include matchedSegmentIds, groupId, or sourceContextIds.
+
+englishCandidateGroupsDebug in the user payload is DEBUG ONLY — ignore it for alignment.`
 
 function serializeCandidateGroup(g: CandidateSegmentGroup) {
   return {
@@ -39,14 +41,10 @@ export function buildBatchAlignmentUserPayload(input: BatchAlignmentPromptInput)
   const { subtitles, candidateGroups, localEnglishContext } = input
   const subtitleIds = subtitles.map((s) => s.subtitleId)
   const payload: Record<string, unknown> = {
+    task: 'chinese_batch_to_english_spans',
     batchSpan: {
       subtitleIds,
-      isConsecutiveDiscourse: true,
-      workflow: [
-        'Slice and align using localEnglishContextBlock.text only (exact substring).',
-        'englishCandidateGroups is debug reference only — do not pick groupId from it.',
-        'Prefer forward motion in pool segment order across the batch.'
-      ]
+      isConsecutiveDiscourse: true
     },
     subtitles: subtitles.map((s) => ({
       subtitleId: s.subtitleId,
@@ -55,25 +53,21 @@ export function buildBatchAlignmentUserPayload(input: BatchAlignmentPromptInput)
     })),
     englishCandidateGroupsDebug: candidateGroups.map(serializeCandidateGroup),
     constraints: {
-      selectionMode: 'local_context_substring',
-      segmentReuse: 'Avoid reusing the same English span when two subtitles need distinct phrases.',
-      ordering: 'subtitles_fixed_order',
-      oneMatchPerSubtitle: true,
-      batchIsConsecutive: true,
-      noEmptyEnglish: true,
-      localContextIsReadOnly: true
+      englishMustBeVerbatimSubstring: true,
+      noTranslation: true,
+      orderedForwardSpans: true,
+      noDuplicateSpanAcrossSubtitles: true,
+      oneMatchPerSubtitle: true
     }
   }
 
   if (localEnglishContext) {
-    payload.localEnglishContextBlock = {
-      segmentIds: localEnglishContext.segmentIds,
+    payload.englishContext = {
       text: localEnglishContext.text,
-      startSegmentIndex: localEnglishContext.startSegmentIndex,
-      endSegmentIndex: localEnglishContext.endSegmentIndex,
+      segmentIds: localEnglishContext.segmentIds,
       segmentCount: localEnglishContext.segmentCount,
       note:
-        'Authoritative English source. Each subtitle.english must be copied verbatim as a contiguous substring of "text" (space-normalized).'
+        'Authoritative English source for this batch. All english fields must be copied verbatim from "text". spanStart/spanEnd are 0-based indices into this same "text" string only.'
     }
   }
 
@@ -85,7 +79,7 @@ export function buildBatchAlignmentPrompt(
 ): { messages: Array<{ role: 'system' | 'user'; content: string }>; promptCharCount: number } {
   const userContent = `${buildBatchAlignmentUserPayload(input)}
 
-Return JSON only.`
+Return JSON only, shape: {"matches":[{"subtitleId":1,"english":"...","spanStart":0,"spanEnd":0,"confidence":0.9,"reason":"..."}]}`
   const messages: Array<{ role: 'system' | 'user'; content: string }> = [
     { role: 'system', content: SYSTEM_PROMPT },
     { role: 'user', content: userContent }
@@ -165,12 +159,32 @@ function parseMatchRow(x: unknown): AlignmentMatchRow | null {
         : NaN
   if (!Number.isFinite(confidence)) return null
   if (typeof o.reason !== 'string') return null
+
+  const scRaw = o.sourceContextIds
+  const sourceContextIds = Array.isArray(scRaw)
+    ? scRaw.filter((id): id is string => typeof id === 'string' && id.trim() !== '')
+    : undefined
+
+  const spanStart = coerceInt(o.spanStart)
+  const spanEnd = coerceInt(o.spanEnd)
+  let declaredSpanStart: number | undefined
+  let declaredSpanEnd: number | undefined
+  if (spanStart != null && spanEnd != null && spanStart >= 0 && spanEnd > spanStart) {
+    declaredSpanStart = spanStart
+    declaredSpanEnd = spanEnd
+  }
+
   return {
     subtitleId,
     groupId,
     matchedSegmentIds,
     english: o.english,
     confidence,
-    reason: o.reason
+    reason: o.reason,
+    sourceContextIds: sourceContextIds?.length ? sourceContextIds : undefined,
+    declaredSpanStart,
+    declaredSpanEnd,
+    spanStart: declaredSpanStart,
+    spanEnd: declaredSpanEnd
   }
 }

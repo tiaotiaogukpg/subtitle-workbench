@@ -18,6 +18,18 @@ export function pickBestStructuralAIForSubtitle(
   return rows[0] ?? null
 }
 
+/** 无可写入 AI 结果时，生成写入 problems 的诊断 key（供 UI 映射）。 */
+export function diagnosticProblemsForFailedAlignment(
+  rowsForSubtitle: AlignmentMatchValidated[]
+): string[] {
+  if (rowsForSubtitle.length === 0) return ['ai_alignment:no_match']
+  const best = [...rowsForSubtitle].sort((a, b) => b.confidence - a.confidence)[0]!
+  if (isStructuralAIWritable(best)) return ['ai_alignment:no_match']
+  const hard = best.validationFlags.find((f) => ALIGNMENT_HARD_BLOCK_FLAGS.includes(f))
+  if (hard) return [`ai_alignment:${hard}`]
+  return ['ai_alignment:no_match']
+}
+
 export function deriveStatusAfterAI(row: AlignmentMatchValidated, thresholdPct: number): SubtitleStatus {
   if (confidenceToPercent(row.confidence) < thresholdPct) {
     return 'low_confidence'
@@ -30,6 +42,12 @@ export function readableProblemsForAIRow(row: AlignmentMatchValidated, threshold
   const out: string[] = []
   if (confidenceToPercent(row.confidence) < thresholdPct) {
     out.push('AI confidence is low.')
+  }
+  if (row.validationFlags.includes('span_mismatch')) {
+    out.push('ai_alignment:span_mismatch')
+  }
+  if (row.validationFlags.includes('adjacent_span_heavy_overlap')) {
+    out.push('ai_alignment:adjacent_span_heavy_overlap')
   }
   return out
 }
@@ -48,7 +66,13 @@ export function formatProblemForDisplay(raw: string): string {
       case 'ai_alignment:fallback_suggestion':
         return 'This line needs manual review.'
       case 'ai_alignment:alignment_drift':
-        return 'Alignment may have drifted.'
+      case 'ai_alignment:drift_skip_batch':
+      case 'ai_alignment:possible_cursor_gap':
+        return 'This line needs manual review.'
+      case 'ai_alignment:user_skipped_batch':
+        return '本批已由用户跳过并标记需复查。'
+      case 'ai_alignment:adjacent_span_heavy_overlap':
+        return '与相邻行英文区间重叠过多，建议复查。'
       case 'ai_alignment:needs_review':
       case 'ai_alignment:no_match':
       case 'ai_alignment:omitted_by_model':
@@ -56,16 +80,25 @@ export function formatProblemForDisplay(raw: string): string {
         return 'AI did not return a reliable match.'
       case 'ai_alignment:empty_english':
         return 'AI did not return a reliable match.'
-      case 'ai_alignment:drift_skip_batch':
-        return '本批因对齐漂移被跳过；请在本批字幕上人工对齐。'
       case 'ai_alignment:invalid_group':
       case 'ai_alignment:invalid_segment':
       case 'ai_alignment:english_mismatch':
       case 'ai_alignment:invalid_candidate':
       case 'ai_alignment:english_not_in_context':
       case 'ai_alignment:non_contiguous_segments':
-      case 'ai_alignment:duplicate_english_in_batch':
         return 'AI did not return a reliable match.'
+      case 'ai_alignment:duplicate_english_in_batch':
+        return '本批存在相同英文文本对应多行，建议复查。'
+      case 'ai_alignment:duplicate_span':
+        return '本批与其它行英文区间重叠较多，建议复查。'
+      case 'ai_alignment:span_mismatch':
+        return '模型给出的 span 位置不精确，已按英文原文重新定位。'
+      case 'ai_alignment:order_span_violation':
+        return '本批英文区间顺序与字幕顺序不完全一致，建议复查。'
+      case 'ai_alignment:missing_subtitle':
+        return '模型漏返回本行，请人工对齐。'
+      case 'ai_alignment:identical_span_reuse':
+        return '多行共用同一英文区间，请手动调整。'
       default:
         return '请在本行复查对齐结果。'
     }

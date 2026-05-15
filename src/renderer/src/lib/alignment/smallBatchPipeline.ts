@@ -1,11 +1,10 @@
 import type { CandidateSegmentGroup, ScriptSegment, SubtitleLine } from '../../types'
 import { pickSmallBatchSubtitles } from './batchSelection'
-import { buildCandidateGroups } from './candidateGroups'
-import { enrichAlignmentMatchesFromLocalContext } from './contextEnrichment'
+import { buildDebugCandidateGroups } from './candidateGroups'
+import { enrichAlignmentMatchesFromFullContext } from './contextEnrichment'
 import { buildAlignmentReport } from './completeness'
-import { DEFAULT_GROUP_WINDOW } from './constants'
-import { buildLocalEnglishContextBlock } from './englishBlock'
-import { filterEnglishPoolSegments, resolveSandboxEnglishCursor } from './englishPool'
+import { buildFullFileEnglishContextBlock } from './englishBlock'
+import { filterEnglishPoolSegments } from './englishPool'
 import {
   buildBatchAlignmentPrompt,
   buildBatchAlignmentUserPayload,
@@ -14,12 +13,35 @@ import {
 import type { AlignmentMatchRow, AlignmentMatchValidated } from './types'
 import { pickBestStructuralAIForSubtitle } from './applyPolicy'
 import { finalizeBatchAlignment } from './sequentialAlignment'
-import { buildValidationWarnings, validateAlignmentResult } from './validation'
+import {
+  buildSpanOrderDiagnostics,
+  buildSpanPairDiagnostics,
+  buildValidationWarnings,
+  validateAlignmentResult
+} from './validation'
 
 function excerptText(text: string | null | undefined, maxLen: number): string | null {
   const t = text?.trim()
   if (!t) return null
   return t.length > maxLen ? `${t.slice(0, maxLen)}…` : t
+}
+
+function buildSpanResolutionDebugLines(rows: AlignmentMatchValidated[]): string[] {
+  return rows
+    .filter((r) => !r.validationFlags.includes('missing_subtitle'))
+    .map((r) => {
+      const d =
+        r.declaredSpanStart != null && r.declaredSpanEnd != null
+          ? `[${r.declaredSpanStart},${r.declaredSpanEnd})`
+          : '—'
+      const loc =
+        r.spanStart != null && r.spanEnd != null ? `[${r.spanStart},${r.spanEnd})` : '—'
+      const g =
+        r.globalSpanStart != null && r.globalSpanEnd != null
+          ? `[${r.globalSpanStart},${r.globalSpanEnd})`
+          : '—'
+      return `#${r.subtitleId}: declared(local)=${d} resolved(local)=${loc} global=${g}`
+    })
 }
 
 /** 小批调试：仅含必要诊断字段（不影响主流程）。 */
@@ -28,6 +50,12 @@ export interface SmallBatchAlignmentDebug {
   rawResponse: string
   validationResult: string[]
   localEnglishExcerpt: string | null
+  /** 较长摘录：便于对照 span 与原文（已截断）。 */
+  localEnglishContextPlain?: string | null
+  missingSubtitleIdsInBatch?: number[]
+  spanPairDiagnostics?: string[]
+  spanOrderDiagnostics?: string[]
+  spanResolutionDebugLines?: string[]
 }
 
 export interface SmallBatchAlignmentSuccess {
@@ -38,7 +66,6 @@ export interface SmallBatchAlignmentSuccess {
   validated: AlignmentMatchValidated[]
   applyable: AlignmentMatchRow[]
   report: ReturnType<typeof buildAlignmentReport>
-  englishCursor: number
   englishPoolSize: number
   debug: SmallBatchAlignmentDebug
 }
@@ -51,7 +78,6 @@ export interface RunSmallBatchAlignmentInput {
   subtitles: SubtitleLine[]
   currentSubtitleId: number | null
   segments: ScriptSegment[]
-  englishCursor: number
   model: string
   batchSize?: number
   confidenceThresholdPct?: number
@@ -83,16 +109,7 @@ export async function runSmallBatchAlignment(
     }
   }
 
-  const startIdx = Math.max(0, input.subtitles.findIndex((l) => l.id === batch[0]!.id))
-  const cursor =
-    input.englishCursor > 0
-      ? Math.min(input.englishCursor, engPool.length - 1)
-      : resolveSandboxEnglishCursor(engPool.length, startIdx, input.subtitles.length, DEFAULT_GROUP_WINDOW)
-
-  const localEnglishContext = buildLocalEnglishContextBlock({
-    englishSegments: engPool,
-    cursor
-  })
+  const localEnglishContext = buildFullFileEnglishContextBlock(engPool)
   const localEnglishExcerpt = excerptText(localEnglishContext?.text, 600)
 
   const promptSubs = batch.map((l, i) => ({
@@ -104,21 +121,17 @@ export async function runSmallBatchAlignment(
   if (!localEnglishContext) {
     return {
       ok: false,
-      error: '无法构建局部英文上下文（游标附近连续纯英文片段不足）。',
+      error: '无法构建整稿英文上下文（需连续可解析的纯英文 Script Pool 片段）。',
       debug: {
         promptPreview: '',
         rawResponse: '',
-        validationResult: ['No localEnglishContextBlock.'],
+        validationResult: ['No englishContext block.'],
         localEnglishExcerpt
       }
     }
   }
 
-  const candidateGroups = buildCandidateGroups({
-    englishSegments: engPool,
-    cursor,
-    windowSize: DEFAULT_GROUP_WINDOW
-  })
+  const candidateGroups = buildDebugCandidateGroups({ englishSegments: engPool })
 
   const promptPreview = buildBatchAlignmentUserPayload({
     subtitles: promptSubs,
@@ -161,32 +174,24 @@ export async function runSmallBatchAlignment(
   }
 
   const batchSubtitleIds = batch.map((b) => b.id)
-  const enriched = enrichAlignmentMatchesFromLocalContext(parsed.data.matches, localEnglishContext, engPool)
+  const enriched = enrichAlignmentMatchesFromFullContext(
+    parsed.data.matches,
+    localEnglishContext,
+    batchSubtitleIds
+  )
   const rawValidated = validateAlignmentResult({
     result: enriched,
     localEnglishContext,
-    englishPool: engPool,
-    expectedSubtitleIds: batchSubtitleIds,
-    alignmentWindow: {
-      englishCursor: cursor,
-      poolLength: engPool.length,
-      windowSize: DEFAULT_GROUP_WINDOW
-    }
+    expectedSubtitleIds: batchSubtitleIds
   })
-  const { validated, drift } = finalizeBatchAlignment(
-    rawValidated,
-    batchSubtitleIds,
-    localEnglishContext,
-    {
-      englishCursor: cursor,
-      poolLength: engPool.length,
-      windowSize: DEFAULT_GROUP_WINDOW
-    }
-  )
-  const validationResult = [
-    ...buildValidationWarnings(validated),
-    ...(drift.drift ? [`alignment_drift: ${drift.reasons.join('; ')}`] : [])
-  ]
+  const { validated } = finalizeBatchAlignment(rawValidated)
+  const validationResult = [...buildValidationWarnings(validated)]
+  const missingSubtitleIdsInBatch = validated
+    .filter((r) => r.validationFlags.includes('missing_subtitle'))
+    .map((r) => r.subtitleId)
+  const spanPairDiagnostics = buildSpanPairDiagnostics(validated)
+  const spanOrderDiagnostics = buildSpanOrderDiagnostics(validated, batchSubtitleIds)
+  const spanResolutionDebugLines = buildSpanResolutionDebugLines(validated)
   const applyable: AlignmentMatchRow[] = []
   for (const id of batchSubtitleIds) {
     const best = pickBestStructuralAIForSubtitle(validated, id)
@@ -197,8 +202,7 @@ export async function runSmallBatchAlignment(
   }
 
   const report = buildAlignmentReport(batchSubtitleIds, validated, localEnglishContext.segmentIds, {
-    confidenceThresholdPct: input.confidenceThresholdPct,
-    drift
+    confidenceThresholdPct: input.confidenceThresholdPct
   })
 
   return {
@@ -209,13 +213,17 @@ export async function runSmallBatchAlignment(
     validated,
     applyable,
     report,
-    englishCursor: cursor,
     englishPoolSize: engPool.length,
     debug: {
       promptPreview,
       rawResponse: api.rawText,
       validationResult,
-      localEnglishExcerpt
+      localEnglishExcerpt,
+      localEnglishContextPlain: excerptText(localEnglishContext.text, 8000),
+      missingSubtitleIdsInBatch,
+      spanPairDiagnostics,
+      spanOrderDiagnostics,
+      spanResolutionDebugLines
     }
   }
 }

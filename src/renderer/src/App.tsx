@@ -6,7 +6,7 @@ import { parseMixedTranscript } from './lib/mixedTranscriptParser'
 import { parseEnglishSemanticClauses } from './lib/transcript/semanticClauseParser'
 import { EnglishScriptPoolPanel } from './components/EnglishScriptPoolPanel'
 import { AiAlignmentWorkflowModal } from './components/AiAlignmentWorkflowModal'
-import { AlignmentDriftRecoveryPanel } from './components/AlignmentDriftRecoveryPanel'
+import { AlignmentReviewPanel } from './components/AlignmentReviewPanel'
 import { VerticalStackSplitter } from './components/VerticalStackSplitter'
 import { useHistoryStore } from './store/historyStore'
 import { useScriptPoolStore } from './store/scriptPoolStore'
@@ -271,7 +271,6 @@ function App(): JSX.Element {
       <main className="app-root app-workbench relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden font-sans text-[13px] leading-normal antialiased">
         <TopBar
           alignmentBusy={alignmentBusy}
-          alignmentDriftRecovering={sessionStatus === 'drift_recovery'}
           chineseSrtInputRef={chineseSrtInputRef}
           englishTxtInputRef={englishTxtInputRef}
           settingsOpen={settingsOpen}
@@ -336,7 +335,6 @@ function TopBar({
   onOpenAlignment,
   onExportBilingualSrt,
   alignmentBusy,
-  alignmentDriftRecovering,
   chineseSrtInputRef,
   englishTxtInputRef,
   onChineseSrtFileChange,
@@ -347,7 +345,6 @@ function TopBar({
   onOpenAlignment: () => void
   onExportBilingualSrt: () => void
   alignmentBusy: boolean
-  alignmentDriftRecovering: boolean
   chineseSrtInputRef: RefObject<HTMLInputElement | null>
   englishTxtInputRef: RefObject<HTMLInputElement | null>
   onChineseSrtFileChange: (event: ChangeEvent<HTMLInputElement>) => void
@@ -431,11 +428,7 @@ function TopBar({
       <div className="app-toolbar__meta type-toolbar-meta hidden text-right sm:block">
         <p className="text-primary font-semibold">AI 对齐</p>
         <p className="text-secondary mt-0.5 leading-tight">
-          {alignmentBusy
-            ? '整文件对齐运行中…'
-            : alignmentDriftRecovering
-              ? '整文件已暂停：请打开「整文件 AI 对齐」或在右侧恢复 Drift'
-              : '一键对齐整份字幕'}
+          {alignmentBusy ? '整文件对齐运行中…' : '一键对齐整份字幕'}
         </p>
       </div>
     </header>
@@ -673,8 +666,7 @@ const sessionStatusLabel: Record<string, string> = {
   paused: '已暂停',
   completed: '已完成',
   failed: '失败',
-  stopped: '已停止',
-  drift_recovery: 'Drift 恢复中'
+  stopped: '已停止'
 }
 
 function AlignmentStatus({ settings }: { settings: SettingsState }): JSX.Element {
@@ -689,7 +681,6 @@ function AlignmentStatus({ settings }: { settings: SettingsState }): JSX.Element
   const processedSubtitleCount = useAlignmentSessionStore((s) => s.processedSubtitleCount)
   const totalSubtitleCount = useAlignmentSessionStore((s) => s.totalSubtitleCount)
   const processingSubtitleId = useAlignmentSessionStore((s) => s.processingSubtitleId)
-  const englishCursor = useAlignmentSessionStore((s) => s.englishCursor)
   const sessionMatchedCount = useAlignmentSessionStore((s) => s.sessionMatchedCount)
   const sessionNeedsReviewCount = useAlignmentSessionStore((s) => s.sessionNeedsReviewCount)
   const sessionFailedCount = useAlignmentSessionStore((s) => s.sessionFailedCount)
@@ -746,7 +737,7 @@ function AlignmentStatus({ settings }: { settings: SettingsState }): JSX.Element
           ) : null}
         </div>
 
-        {sessionStatus === 'drift_recovery' ? <AlignmentDriftRecoveryPanel /> : null}
+        <AlignmentReviewPanel />
 
         <div className="metric-stack space-y-3">
           <Metric
@@ -762,7 +753,6 @@ function AlignmentStatus({ settings }: { settings: SettingsState }): JSX.Element
             label="当前处理行"
             value={processingSubtitleId != null ? `#${processingSubtitleId}` : '—'}
           />
-          <Metric label="English cursor" value={String(englishCursor)} />
         </div>
 
         <div className="metric-stack space-y-3">

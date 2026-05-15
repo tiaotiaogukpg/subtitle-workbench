@@ -1,8 +1,6 @@
 import { useMemo, type JSX } from 'react'
 import type { ScriptPoolListFilter, ScriptSegmentLanguage } from '../types'
-import { filterEnglishPoolSegments } from '../lib/alignment'
 import { filterScriptSegmentsForList, useScriptPoolStore } from '../store/scriptPoolStore'
-import { useAlignmentPreviewStore } from '../store/alignmentPreviewStore'
 
 function shortPreview(text: string, max = 120): string {
   const t = text.replace(/\s+/g, ' ').trim()
@@ -41,16 +39,8 @@ export function EnglishScriptPoolPanel(): JSX.Element {
   const setListFilter = useScriptPoolStore((s) => s.setListFilter)
   const selectedSegmentId = useScriptPoolStore((s) => s.selectedSegmentId)
   const selectSegment = useScriptPoolStore((s) => s.selectSegment)
-  const setEnglishCursor = useAlignmentPreviewStore((s) => s.setEnglishCursor)
 
   const visible = useMemo(() => filterScriptSegmentsForList(segments, listFilter), [segments, listFilter])
-
-  const englishPoolIndexById = useMemo(() => {
-    const pool = filterEnglishPoolSegments(segments)
-    const m = new Map<string, number>()
-    pool.forEach((s, i) => m.set(s.id, i))
-    return m
-  }, [segments])
 
   return (
     <aside className="app-panel script-pool-panel flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
@@ -95,7 +85,6 @@ export function EnglishScriptPoolPanel(): JSX.Element {
           visible.map((seg, index) => {
             const displayIndex = index + 1
             const isSelected = seg.id === selectedSegmentId
-            const alignPoolIdx = englishPoolIndexById.get(seg.id)
 
             return (
               <div
@@ -134,21 +123,6 @@ export function EnglishScriptPoolPanel(): JSX.Element {
                     {shortPreview(seg.text)}
                   </span>
                 </button>
-                {alignPoolIdx != null ? (
-                  <div className="flex justify-end border-t border-[var(--color-border-subtle)] px-2 py-1.5">
-                    <button
-                      type="button"
-                      className="toolbar-btn text-[11px]"
-                      title="将英文池游标设为本段在「纯英文池」中的下标，用于整文件对齐 / drift 恢复"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setEnglishCursor(alignPoolIdx)
-                      }}
-                    >
-                      设为对齐游标 · pool[{alignPoolIdx}]
-                    </button>
-                  </div>
-                ) : null}
               </div>
             )
           })

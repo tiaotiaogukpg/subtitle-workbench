@@ -3,10 +3,11 @@ import type { AlignmentMatchValidationFlag } from './types'
 /** 是否通过结构校验（整文件是否写入 english 另见 applyPolicy）。 */
 export const ALIGNMENT_HARD_BLOCK_FLAGS: AlignmentMatchValidationFlag[] = [
   'invalid_candidate',
-  'invalid_segment_id',
   'english_not_in_context',
-  'non_contiguous_segments',
+  'identical_span_reuse',
+  'duplicate_span',
   'duplicate_english_in_batch',
+  'adjacent_span_heavy_overlap',
   'missing_subtitle',
   'empty_english'
 ]

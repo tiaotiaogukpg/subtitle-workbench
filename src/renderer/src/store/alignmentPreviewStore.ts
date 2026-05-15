@@ -14,13 +14,11 @@ interface AlignmentPreviewState {
   lastCandidateGroups: CandidateSegmentGroup[]
   lastReport: AlignmentReport | null
   batchSubtitleIds: number[]
-  englishCursor: number
   debug: AlignmentPreviewDebug | null
 }
 
 interface AlignmentPreviewActions {
   reset: () => void
-  setEnglishCursor: (cursor: number) => void
   startLoading: () => void
   setSuccess: (payload: {
     validated: AlignmentMatchValidated[]
@@ -41,20 +39,13 @@ const initial: AlignmentPreviewState = {
   lastCandidateGroups: [],
   lastReport: null,
   batchSubtitleIds: [],
-  englishCursor: 0,
   debug: null
 }
 
 export const useAlignmentPreviewStore = create<AlignmentPreviewState & AlignmentPreviewActions>((set) => ({
   ...initial,
 
-  reset: () =>
-    set((s) => ({
-      ...initial,
-      englishCursor: s.englishCursor
-    })),
-
-  setEnglishCursor: (englishCursor) => set({ englishCursor }),
+  reset: () => set({ ...initial }),
 
   startLoading: () =>
     set({

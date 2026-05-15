@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ScriptSegment } from '../../types'
-import { buildCandidateGroups, normalizeGroupText } from './candidateGroups'
+import { buildDebugCandidateGroups, normalizeGroupText } from './candidateGroups'
 
 function en(id: string, text: string): ScriptSegment {
   return {
@@ -12,10 +12,10 @@ function en(id: string, text: string): ScriptSegment {
   }
 }
 
-describe('buildCandidateGroups (debug singletons)', () => {
-  it('emits one group per segment in window', () => {
+describe('buildDebugCandidateGroups', () => {
+  it('emits one group per english segment in pool order', () => {
     const pool = [en('a', 'Hello there'), en('b', 'Second bit')]
-    const groups = buildCandidateGroups({ englishSegments: pool, cursor: 0, windowSize: 10 })
+    const groups = buildDebugCandidateGroups({ englishSegments: pool })
     expect(groups.length).toBe(2)
     expect(groups.every((g) => g.segmentIds.length === 1)).toBe(true)
     expect(groups[0]!.id).toBe('g_0_0')

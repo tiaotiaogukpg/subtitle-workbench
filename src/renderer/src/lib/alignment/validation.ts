@@ -1,8 +1,10 @@
 import { containsChinese } from '../language'
-import type { ScriptSegment } from '../../types'
 import type { LocalEnglishContextBlock } from './englishBlock'
-import { getEnglishPoolWindowBounds } from './candidateGroups'
-import { DEFAULT_GROUP_WINDOW } from './constants'
+import {
+  ADJACENT_SPAN_OVERLAP_RATIO,
+  ORDER_SPAN_BACKTRACK_TOLERANCE,
+  SPAN_OVERLAP_DUPLICATE_RATIO
+} from './constants'
 import { normalizeGroupText } from './textUtils'
 import { computeMatchApplyable } from './matchFlags'
 import type {
@@ -13,48 +15,97 @@ import type {
 
 export interface ValidateAlignmentResultInput {
   result: AlignmentMatchRow[]
-  /** 模型须在拼接后的该文本中取连续子串作为 english。 */
+  /** 本批 DeepSeek 使用的整稿 English context（规范化文本）。 */
   localEnglishContext: LocalEnglishContextBlock | null
-  /** 用于 segment id 与连续下标校验的英文池（与游标窗口同源）。 */
-  englishPool: ScriptSegment[]
   expectedSubtitleIds: number[]
-  alignmentWindow?: { englishCursor: number; poolLength: number; windowSize?: number }
-}
-
-function segmentIndexMap(pool: ScriptSegment[]): Map<string, number> {
-  return new Map(pool.map((s, i) => [s.id, i]))
-}
-
-function areContiguousInPool(pool: ScriptSegment[], ids: string[]): boolean {
-  if (ids.length === 0) return false
-  const map = segmentIndexMap(pool)
-  const idx = ids.map((id) => map.get(id)).filter((x): x is number => x !== undefined)
-  if (idx.length !== ids.length) return false
-  idx.sort((a, b) => a - b)
-  for (let k = 1; k < idx.length; k++) {
-    if (idx[k] !== idx[k - 1]! + 1) return false
-  }
-  return true
 }
 
 function normalizedEnglishKey(s: string): string {
   return normalizeGroupText(s).toLowerCase()
 }
 
+function spanKey(s: number, e: number): string {
+  return `${s}:${e}`
+}
+
+function spanOverlapLen(a0: number, a1: number, b0: number, b1: number): number {
+  const lo = Math.max(a0, b0)
+  const hi = Math.min(a1, b1)
+  return Math.max(0, hi - lo)
+}
+
+function rowSpanEligible(m: AlignmentMatchValidated): boolean {
+  if (m.validationFlags.includes('missing_subtitle')) return false
+  if (m.validationFlags.includes('empty_english')) return false
+  if (m.validationFlags.includes('english_not_in_context')) return false
+  if (m.spanStart == null || m.spanEnd == null) return false
+  if (!Number.isInteger(m.spanStart) || !Number.isInteger(m.spanEnd)) return false
+  return m.spanStart < m.spanEnd
+}
+
+function addFlag(
+  map: Map<number, Set<AlignmentMatchValidationFlag>>,
+  subtitleId: number,
+  flag: AlignmentMatchValidationFlag
+): void {
+  if (!map.has(subtitleId)) map.set(subtitleId, new Set())
+  map.get(subtitleId)!.add(flag)
+}
+
+/** 供调试面板：根据已解析的 span 粗查批内重叠（与校验阈值一致）。 */
+export function buildSpanPairDiagnostics(rows: AlignmentMatchValidated[]): string[] {
+  const eligible = rows.filter(rowSpanEligible)
+  const notes: string[] = []
+  for (let i = 0; i < eligible.length; i++) {
+    const a = eligible[i]!
+    const a0 = a.spanStart!
+    const a1 = a.spanEnd!
+    for (let j = i + 1; j < eligible.length; j++) {
+      const b = eligible[j]!
+      const b0 = b.spanStart!
+      const b1 = b.spanEnd!
+      if (a0 === b0 && a1 === b1) {
+        notes.push(`identical_span #${a.subtitleId} ≅ #${b.subtitleId} [${a0},${a1})`)
+        continue
+      }
+      const olen = spanOverlapLen(a0, a1, b0, b1)
+      const minLen = Math.min(a1 - a0, b1 - b0)
+      if (minLen > 0 && olen / minLen >= SPAN_OVERLAP_DUPLICATE_RATIO) {
+        notes.push(
+          `heavy_overlap #${a.subtitleId} vs #${b.subtitleId} (${Math.round((100 * olen) / minLen)}% of shorter span)`
+        )
+      }
+    }
+  }
+  return notes
+}
+
+export function buildSpanOrderDiagnostics(
+  rows: AlignmentMatchValidated[],
+  expectedSubtitleIds: number[]
+): string[] {
+  const byId = new Map(rows.map((r) => [r.subtitleId, r]))
+  const notes: string[] = []
+  for (let k = 1; k < expectedSubtitleIds.length; k++) {
+    const prevId = expectedSubtitleIds[k - 1]!
+    const curId = expectedSubtitleIds[k]!
+    const earlier = byId.get(prevId)
+    const later = byId.get(curId)
+    if (!earlier || !later) continue
+    if (!rowSpanEligible(earlier) || !rowSpanEligible(later)) continue
+    if (later.spanStart! < earlier.spanStart! - ORDER_SPAN_BACKTRACK_TOLERANCE) {
+      notes.push(
+        `order_span #${prevId}[${earlier.spanStart},${earlier.spanEnd}) → #${curId}[${later.spanStart},${later.spanEnd}) backtracks`
+      )
+    }
+  }
+  return notes
+}
+
 export function validateAlignmentResult(input: ValidateAlignmentResultInput): AlignmentMatchValidated[] {
-  const { result, localEnglishContext, englishPool, expectedSubtitleIds, alignmentWindow } = input
+  const { result, localEnglishContext, expectedSubtitleIds } = input
   const expected = new Set(expectedSubtitleIds)
   const ctxText = localEnglishContext ? normalizeGroupText(localEnglishContext.text) : ''
-  const allowedIds = new Set(localEnglishContext?.segmentIds ?? [])
-
-  const win =
-    alignmentWindow && alignmentWindow.poolLength > 0
-      ? getEnglishPoolWindowBounds(
-          alignmentWindow.poolLength,
-          alignmentWindow.englishCursor,
-          alignmentWindow.windowSize ?? DEFAULT_GROUP_WINDOW
-        )
-      : null
 
   const dupCounts = new Map<string, number>()
   for (const m of result) {
@@ -67,31 +118,30 @@ export function validateAlignmentResult(input: ValidateAlignmentResultInput): Al
     if (!m.english.trim()) flags.push('empty_english')
     if (containsChinese(m.english)) flags.push('invalid_candidate')
 
+    const englishNorm = normalizeGroupText(m.english)
+
     if (!localEnglishContext) {
       flags.push('english_not_in_context')
     } else {
-      const ne = normalizeGroupText(m.english)
-      if (!ne) flags.push('empty_english')
-      else if (!ctxText.toLowerCase().includes(ne.toLowerCase())) {
+      if (!englishNorm) flags.push('empty_english')
+      else if (!ctxText.toLowerCase().includes(englishNorm.toLowerCase())) {
         flags.push('english_not_in_context')
       }
     }
 
-    if (m.matchedSegmentIds.length === 0) flags.push('invalid_segment_id')
-    for (const id of m.matchedSegmentIds) {
-      if (!allowedIds.has(id)) flags.push('invalid_segment_id')
-    }
-    if (m.matchedSegmentIds.length > 0 && !areContiguousInPool(englishPool, m.matchedSegmentIds)) {
-      flags.push('non_contiguous_segments')
-    }
-    if (win) {
-      const map = segmentIndexMap(englishPool)
-      for (const id of m.matchedSegmentIds) {
-        const ix = map.get(id)
-        if (ix == null || ix < win.windowStart || ix > win.windowEnd) {
-          flags.push('invalid_segment_id')
-          break
-        }
+    if (
+      m.spanStart != null &&
+      m.spanEnd != null &&
+      Number.isInteger(m.spanStart) &&
+      Number.isInteger(m.spanEnd) &&
+      m.spanStart >= 0 &&
+      m.spanEnd <= ctxText.length &&
+      m.spanStart < m.spanEnd &&
+      englishNorm
+    ) {
+      const localSlice = ctxText.slice(m.spanStart, m.spanEnd)
+      if (localSlice.toLowerCase() !== englishNorm.toLowerCase()) {
+        flags.push('span_mismatch')
       }
     }
 
@@ -118,7 +168,81 @@ export function validateAlignmentResult(input: ValidateAlignmentResultInput): Al
     }
   }
 
-  return [...base, ...missingRows]
+  const mergedPre = [...base, ...missingRows]
+  const batchExtra = new Map<number, Set<AlignmentMatchValidationFlag>>()
+
+  const spanRows = mergedPre.filter(rowSpanEligible)
+  const keyToIds = new Map<string, number[]>()
+  for (const r of spanRows) {
+    const k = spanKey(r.spanStart!, r.spanEnd!)
+    const arr = keyToIds.get(k) ?? []
+    arr.push(r.subtitleId)
+    keyToIds.set(k, arr)
+  }
+  for (const ids of keyToIds.values()) {
+    if (ids.length <= 1) continue
+    const uniq = [...new Set(ids)]
+    for (const id of uniq) addFlag(batchExtra, id, 'identical_span_reuse')
+  }
+
+  for (let i = 0; i < spanRows.length; i++) {
+    const a = spanRows[i]!
+    const a0 = a.spanStart!
+    const a1 = a.spanEnd!
+    for (let j = i + 1; j < spanRows.length; j++) {
+      const b = spanRows[j]!
+      if (a.subtitleId === b.subtitleId) continue
+      const b0 = b.spanStart!
+      const b1 = b.spanEnd!
+      if (a0 === b0 && a1 === b1) continue
+      const olen = spanOverlapLen(a0, a1, b0, b1)
+      const minLen = Math.min(a1 - a0, b1 - b0)
+      if (minLen > 0 && olen / minLen >= SPAN_OVERLAP_DUPLICATE_RATIO) {
+        addFlag(batchExtra, a.subtitleId, 'duplicate_span')
+        addFlag(batchExtra, b.subtitleId, 'duplicate_span')
+      }
+    }
+  }
+
+  const byId = new Map(mergedPre.map((r) => [r.subtitleId, r]))
+  for (let k = 1; k < expectedSubtitleIds.length; k++) {
+    const prevId = expectedSubtitleIds[k - 1]!
+    const curId = expectedSubtitleIds[k]!
+    const earlier = byId.get(prevId)
+    const later = byId.get(curId)
+    if (!earlier || !later) continue
+    if (!rowSpanEligible(earlier) || !rowSpanEligible(later)) continue
+    if (later.spanStart! < earlier.spanStart! - ORDER_SPAN_BACKTRACK_TOLERANCE) {
+      addFlag(batchExtra, later.subtitleId, 'order_span_violation')
+    }
+    const olen = spanOverlapLen(
+      earlier.spanStart!,
+      earlier.spanEnd!,
+      later.spanStart!,
+      later.spanEnd!
+    )
+    const minLen = Math.min(
+      earlier.spanEnd! - earlier.spanStart!,
+      later.spanEnd! - later.spanStart!
+    )
+    if (minLen > 0 && olen / minLen >= ADJACENT_SPAN_OVERLAP_RATIO) {
+      addFlag(batchExtra, earlier.subtitleId, 'adjacent_span_heavy_overlap')
+      addFlag(batchExtra, later.subtitleId, 'adjacent_span_heavy_overlap')
+    }
+  }
+
+  const finalRows = mergedPre.map((r) => {
+    const add = batchExtra.get(r.subtitleId)
+    if (!add || add.size === 0) return r
+    const mergedFlags = [...new Set([...r.validationFlags, ...add])]
+    return {
+      ...r,
+      validationFlags: mergedFlags,
+      applyable: computeMatchApplyable(mergedFlags)
+    }
+  })
+
+  return finalRows
 }
 
 export function buildValidationWarnings(validated: AlignmentMatchValidated[]): string[] {

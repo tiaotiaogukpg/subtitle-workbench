@@ -1,7 +1,6 @@
 import { ALIGNMENT_USER_READABLE_MESSAGES } from './applyPolicy'
 import type { ScriptSegment, SubtitleLine } from '../../types'
 import { filterEnglishPoolSegments } from './englishPool'
-import type { AlignmentDriftResult } from './sequentialAlignment'
 import type { AlignmentMatchValidated } from './types'
 
 /** 整文件对齐完成后的汇总报告。 */
@@ -29,8 +28,6 @@ export interface AlignmentReport {
   lowConfidenceCount: number
   /** 缺失 + 无效，需人工复查。 */
   needsReviewCount: number
-  alignmentDrift: boolean
-  alignmentDriftReasons: string[]
 }
 
 export function checkSubtitleCompleteness(
@@ -66,7 +63,7 @@ export function buildAlignmentReport(
   expectedSubtitleIds: number[],
   validated: AlignmentMatchValidated[],
   scopeSegmentIds: string[],
-  options?: { confidenceThresholdPct?: number; drift?: AlignmentDriftResult }
+  options?: { confidenceThresholdPct?: number }
 ): AlignmentReport {
   const { missingSubtitleIds } = checkSubtitleCompleteness(expectedSubtitleIds, validated)
   const { duplicateSegmentIds, unusedSegmentIdsInWindow } = checkEnglishSegmentUsage(
@@ -95,9 +92,7 @@ export function buildAlignmentReport(
     validationWarningCount,
     invalidResultCount,
     lowConfidenceCount,
-    needsReviewCount,
-    alignmentDrift: options?.drift?.drift ?? false,
-    alignmentDriftReasons: options?.drift?.reasons ?? []
+    needsReviewCount
   }
 }
 

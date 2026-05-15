@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type JSX, type MouseEvent } from 'react'
-import { AlignmentDriftRecoveryPanel } from './AlignmentDriftRecoveryPanel'
+import { AlignmentReviewPanel } from './AlignmentReviewPanel'
 import { filterEnglishPoolSegments, validateAlignmentPrerequisites } from '../lib/alignment'
+import { useAlignmentPreviewStore } from '../store/alignmentPreviewStore'
 import {
   isAlignmentSessionActive,
   useAlignmentSessionStore
@@ -38,7 +39,7 @@ export function AiAlignmentWorkflowModal({
 
   const sessionStatus = useAlignmentSessionStore((s) => s.status)
   const sessionActive = isAlignmentSessionActive(sessionStatus)
-  const driftRecovering = sessionStatus === 'drift_recovery'
+  const previewPhase = useAlignmentPreviewStore((s) => s.phase)
   const sessionSummary = useAlignmentSessionStore((s) => s.lastSummary)
   const sessionError = useAlignmentSessionStore((s) => s.lastError)
   const activeConfig = useAlignmentSessionStore((s) => s.activeConfig)
@@ -101,7 +102,7 @@ export function AiAlignmentWorkflowModal({
   }, [draft, onCommitAlignSettings])
 
   const handleRunFullFile = useCallback(() => {
-    if (sessionActive || driftRecovering) return
+    if (sessionActive) return
     commitDraftToSettings()
     const err = onStartAlignment({ ...draft })
     if (err) {
@@ -109,7 +110,7 @@ export function AiAlignmentWorkflowModal({
       return
     }
     onClose()
-  }, [sessionActive, driftRecovering, draft, commitDraftToSettings, onStartAlignment, onClose])
+  }, [sessionActive, draft, commitDraftToSettings, onStartAlignment, onClose])
 
   const testConnection = useCallback(async () => {
     const b = window.bilingualSubtitleAligner
@@ -139,11 +140,10 @@ export function AiAlignmentWorkflowModal({
     if (event.target === event.currentTarget) onClose()
   }
 
-  const canRunFullFile = !sessionActive && !driftRecovering && !prereqError && subtitles.length > 0
+  const canRunFullFile = !sessionActive && !prereqError && subtitles.length > 0
 
   const showRunFullAgain =
     !sessionActive &&
-    !driftRecovering &&
     (sessionStatus === 'completed' || sessionStatus === 'failed' || sessionStatus === 'stopped')
 
   const totalBatchesEstimate = Math.max(1, Math.ceil(subtitles.length / draft.batchSize))
@@ -189,12 +189,6 @@ export function AiAlignmentWorkflowModal({
                 <p className="mt-1 text-meta">{sessionSummary}</p>
                 <p className="mt-1 text-meta">可关闭本窗口；右侧 Panel 将持续更新。</p>
               </div>
-            ) : driftRecovering ? (
-              <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-900 dark:text-amber-100">
-                <p className="font-semibold">对齐漂移 · 等待人工恢复</p>
-                <p className="mt-1 text-meta leading-snug">{sessionSummary}</p>
-                <p className="mt-1 text-meta">请使用下方恢复区，或右侧 Alignment Panel 中的相同控件。</p>
-              </div>
             ) : sessionStatus === 'completed' || sessionStatus === 'failed' || sessionStatus === 'stopped' ? (
               <div
                 className={`rounded-lg border px-3 py-2 text-[12px] ${
@@ -217,7 +211,7 @@ export function AiAlignmentWorkflowModal({
               </div>
             ) : null}
 
-            {driftRecovering ? <AlignmentDriftRecoveryPanel compact /> : null}
+            {sessionActive && previewPhase === 'ready' ? <AlignmentReviewPanel compact /> : null}
 
             <section className="settings-section">
               <h3 className="settings-heading">对齐参数</h3>
@@ -227,7 +221,7 @@ export function AiAlignmentWorkflowModal({
                   <select
                     className="settings-select mt-1 w-full"
                     value={draft.model}
-                    disabled={sessionActive || driftRecovering}
+                    disabled={sessionActive}
                     onChange={(e) => patchDraft({ model: e.currentTarget.value })}
                   >
                     <option value="deepseek-chat">deepseek-chat</option>
@@ -243,7 +237,7 @@ export function AiAlignmentWorkflowModal({
                     max={50}
                     step={1}
                     value={draft.batchSize}
-                    disabled={sessionActive || driftRecovering}
+                    disabled={sessionActive}
                     onChange={(e) => {
                       const next = parseSettingsInt(e.currentTarget.value, 1, 50)
                       if (next === null) return
@@ -261,7 +255,7 @@ export function AiAlignmentWorkflowModal({
                       max={100}
                       step={1}
                       value={draft.confidenceThreshold}
-                      disabled={sessionActive || driftRecovering}
+                      disabled={sessionActive}
                       onChange={(e) => {
                         const next = parseSettingsInt(e.currentTarget.value, 0, 100)
                         if (next === null) return
@@ -296,7 +290,7 @@ export function AiAlignmentWorkflowModal({
                 <button
                   type="button"
                   className="toolbar-btn text-[12px]"
-                  disabled={connPhase === 'testing' || sessionActive || driftRecovering}
+                  disabled={connPhase === 'testing' || sessionActive}
                   onClick={() => void testConnection()}
                 >
                   {connPhase === 'testing' ? '测试中…' : 'Test Connection'}
@@ -346,7 +340,7 @@ export function AiAlignmentWorkflowModal({
               再次运行整文件对齐
             </button>
           ) : null}
-          {!sessionActive && !showRunFullAgain && !driftRecovering ? (
+          {!sessionActive && !showRunFullAgain ? (
             <button
               type="button"
               className="settings-footer-button btn-accent-solid"
