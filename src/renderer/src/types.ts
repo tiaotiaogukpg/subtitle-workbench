@@ -1,5 +1,30 @@
 export type SubtitleStatus = 'confirmed' | 'low_confidence' | 'manual' | 'unmatched' | 'needs_review'
 
+/** 单行/整批 AI 对齐的一次尝试记录（`english` 为已应用结果时仍保留历史）。 */
+export type SubtitleAiAttemptSource = 'initial' | 'retry' | 'single_retry' | 'wide_retry'
+
+export interface SubtitleAiAttempt {
+  id: string
+  createdAt: number
+  source: SubtitleAiAttemptSource
+  english: string
+  /** 与 `SubtitleLine.confidence` 一致：0–100 整数百分比。 */
+  confidence: number
+  problems: string[]
+  /** 模型在当次上下文内的局部 span（不同批次窗口不可横向比较）。 */
+  spanStart?: number
+  spanEnd?: number
+  /** 与 Script Pool 串联串对齐的全局 span；存在时可与邻行比较重叠。 */
+  globalSpanStart?: number
+  globalSpanEnd?: number
+  contextTier?: number
+  reason?: string
+  /** 应用该尝试时写入的片段 id（可选，失败尝试通常为空）。 */
+  matchedSegmentIds?: string[]
+  /** 写入该行时应对应的状态（与整批策略一致）；缺失时由 UI 按置信度阈值回推。 */
+  resultStatus?: SubtitleStatus
+}
+
 export interface CandidateMatch {
   id: string
   /** 该候选合并自哪些英文原稿片段（连续片段 id）。 */
@@ -37,6 +62,8 @@ export interface SubtitleLine {
   manuallyEdited: boolean
   /** 当前行英文对齐所绑定的 Script Pool 片段 id（预留 / 与候选一致）。 */
   matchedSegmentIds: string[]
+  /** 历史 AI 尝试（首轮、Coverage、单行重试等）；当前 `english` 仍为已应用结果。 */
+  aiAttempts?: SubtitleAiAttempt[]
 }
 
 export type ScriptSegmentLanguage = 'english' | 'chinese' | 'mixed' | 'unknown'

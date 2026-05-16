@@ -1,12 +1,32 @@
 import { create } from 'zustand'
+import { mergeAlignmentProblems } from '../lib/alignment/applyPolicy'
 import {
-  confidenceToPercent,
-  mergeAlignmentProblems,
-  statusFromConfidencePct,
-  type AlignmentMatchRow
-} from '../lib/alignment'
-import type { CandidateMatch, SubtitleLine, SubtitleStatus } from '../types'
+  buildAiAttemptPayloadFromWritableRow,
+  newAiAttemptId,
+  resolveStatusWhenApplyingAttempt,
+  trimAttemptsList
+} from '../lib/alignment/aiAttempts'
+import type { AlignmentMatchRow, AlignmentMatchValidated } from '../lib/alignment/types'
+import { confidenceToPercent } from '../lib/alignment/types'
+import type {
+  CandidateMatch,
+  SubtitleAiAttempt,
+  SubtitleAiAttemptSource,
+  SubtitleLine,
+  SubtitleStatus
+} from '../types'
 import { useScriptPoolStore } from './scriptPoolStore'
+
+export type AiMatchBatchEntry = {
+  subtitleId: number
+  primary: AlignmentMatchRow
+  status: SubtitleStatus
+  problems: string[]
+  candidates: CandidateMatch[]
+  attemptBestValidated?: AlignmentMatchValidated
+  attemptSource?: SubtitleAiAttemptSource
+  attemptContextTier?: number
+}
 
 export interface SubtitleStoreState {
   subtitles: SubtitleLine[]
@@ -22,26 +42,17 @@ export interface SubtitleStoreActions {
   replaceEnglish: (id: number, english: string, matchedSegmentIds?: string[]) => void
   addProblem: (id: number, problem: string) => void
   removeProblem: (id: number, problem: string) => void
-  /** 整文件对齐：写入 AI 英文 + 状态 + 可读 problems + 候选（含 source）。 */
-  applyFullFileAIMatchBatch: (
-    entries: Array<{
-      subtitleId: number
-      primary: AlignmentMatchRow
-      status: SubtitleStatus
-      problems: string[]
-      candidates: CandidateMatch[]
-    }>
+  /** 仅追加 AI 尝试记录（不修改 english）。 */
+  appendSubtitleAiAttempts: (
+    items: Array<{ subtitleId: number; attempt: Omit<SubtitleAiAttempt, 'id' | 'createdAt'> }>
   ) => void
-  /** Retry Coverage Pass：仅更新非 confirmed/manual 行。 */
-  applyRetryCoverageMatchBatch: (
-    entries: Array<{
-      subtitleId: number
-      primary: AlignmentMatchRow
-      status: SubtitleStatus
-      problems: string[]
-      candidates: CandidateMatch[]
-    }>
-  ) => void
+  removeSubtitleAiAttempt: (subtitleId: number, attemptId: string) => void
+  /** 将某条尝试应用为当前 `english` 与状态。 */
+  applySubtitleAiAttempt: (subtitleId: number, attemptId: string, confidenceThresholdPct: number) => void
+  /** 整文件对齐：写入 AI 英文 + 状态 + 可读 problems + 候选（含 source），并追加 `aiAttempts`。 */
+  applyFullFileAIMatchBatch: (entries: AiMatchBatchEntry[], confidenceThresholdPct: number) => void
+  /** Retry Coverage Pass：仅更新非 confirmed/manual 行，并追加 `aiAttempts`。 */
+  applyRetryCoverageMatchBatch: (entries: AiMatchBatchEntry[], confidenceThresholdPct: number) => void
   /** 标记需复查：默认不修改 english；若 clearEnglish 则清空英文与 matchedSegmentIds。 */
   applyAlignmentReviewStates: (
     entries: Array<{
@@ -61,6 +72,13 @@ function resolveCurrentIdAfterListChange(list: SubtitleLine[], prevId: number | 
   if (list.length === 0) return null
   if (prevId != null && list.some((l) => l.id === prevId)) return prevId
   return list[0]!.id
+}
+
+function pushAttempt(line: SubtitleLine, attempt: SubtitleAiAttempt): SubtitleLine {
+  return {
+    ...line,
+    aiAttempts: trimAttemptsList([...(line.aiAttempts ?? []), attempt])
+  }
 }
 
 export const useSubtitleStore = create<SubtitleStore>((set, get) => ({
@@ -119,7 +137,75 @@ export const useSubtitleStore = create<SubtitleStore>((set, get) => ({
       )
     })),
 
-  applyFullFileAIMatchBatch: (entries) => {
+  appendSubtitleAiAttempts: (items) => {
+    if (items.length === 0) return
+    const validSeg = new Set(useScriptPoolStore.getState().segments.map((seg) => seg.id))
+    const grouped = new Map<number, Omit<SubtitleAiAttempt, 'id' | 'createdAt'>[]>()
+    for (const it of items) {
+      const list = grouped.get(it.subtitleId) ?? []
+      list.push(it.attempt)
+      grouped.set(it.subtitleId, list)
+    }
+    set((s) => ({
+      subtitles: s.subtitles.map((line) => {
+        const list = grouped.get(line.id)
+        if (!list?.length) return line
+        let next = line
+        for (const att of list) {
+          const filteredIds = (att.matchedSegmentIds ?? []).filter((id) => validSeg.has(id))
+          const full: SubtitleAiAttempt = {
+            ...att,
+            matchedSegmentIds: filteredIds,
+            id: newAiAttemptId(),
+            createdAt: Date.now()
+          }
+          next = pushAttempt(next, full)
+        }
+        return next
+      })
+    }))
+  },
+
+  removeSubtitleAiAttempt: (subtitleId, attemptId) =>
+    set((s) => ({
+      subtitles: s.subtitles.map((line) =>
+        line.id !== subtitleId
+          ? line
+          : { ...line, aiAttempts: line.aiAttempts?.filter((a) => a.id !== attemptId) }
+      )
+    })),
+
+  applySubtitleAiAttempt: (subtitleId, attemptId, confidenceThresholdPct) => {
+    const validSeg = new Set(useScriptPoolStore.getState().segments.map((seg) => seg.id))
+    set((s) => ({
+      subtitles: s.subtitles.map((line) => {
+        if (line.id !== subtitleId) return line
+        const att = line.aiAttempts?.find((a) => a.id === attemptId)
+        if (!att || !att.english.trim()) return line
+        const filteredIds = (att.matchedSegmentIds ?? []).filter((id) => validSeg.has(id))
+        const status = resolveStatusWhenApplyingAttempt(att, confidenceThresholdPct)
+        const cand: CandidateMatch = {
+          id: `from-attempt-${attemptId}`,
+          segmentIds: filteredIds,
+          text: att.english.trim(),
+          confidence: att.confidence,
+          source: 'ai'
+        }
+        return {
+          ...line,
+          english: att.english.trim(),
+          matchedSegmentIds: filteredIds,
+          confidence: att.confidence,
+          status,
+          candidates: [cand],
+          problems: mergeAlignmentProblems([], att.problems),
+          manuallyEdited: false
+        }
+      })
+    }))
+  },
+
+  applyFullFileAIMatchBatch: (entries, confidenceThresholdPct) => {
     if (entries.length === 0) return
     const validSeg = new Set(useScriptPoolStore.getState().segments.map((seg) => seg.id))
     const byId = new Map(entries.map((e) => [e.subtitleId, e]))
@@ -130,7 +216,7 @@ export const useSubtitleStore = create<SubtitleStore>((set, get) => ({
         const primary = entry.primary
         const filteredIds = primary.matchedSegmentIds.filter((id) => validSeg.has(id))
         const topPct = confidenceToPercent(primary.confidence)
-        return {
+        let next: SubtitleLine = {
           ...line,
           english: primary.english.trim(),
           matchedSegmentIds: filteredIds,
@@ -140,11 +226,27 @@ export const useSubtitleStore = create<SubtitleStore>((set, get) => ({
           problems: mergeAlignmentProblems(line.problems, entry.problems),
           manuallyEdited: false
         }
+        if (entry.attemptBestValidated) {
+          const payload = buildAiAttemptPayloadFromWritableRow(entry.attemptBestValidated, {
+            source: entry.attemptSource ?? 'initial',
+            contextTier: entry.attemptContextTier,
+            thresholdPct: confidenceThresholdPct,
+            problems: entry.problems
+          })
+          const full: SubtitleAiAttempt = {
+            ...payload,
+            id: newAiAttemptId(),
+            createdAt: Date.now(),
+            matchedSegmentIds: filteredIds
+          }
+          next = pushAttempt(next, full)
+        }
+        return next
       })
     }))
   },
 
-  applyRetryCoverageMatchBatch: (entries) => {
+  applyRetryCoverageMatchBatch: (entries, confidenceThresholdPct) => {
     if (entries.length === 0) return
     const validSeg = new Set(useScriptPoolStore.getState().segments.map((seg) => seg.id))
     const byId = new Map(entries.map((e) => [e.subtitleId, e]))
@@ -156,7 +258,7 @@ export const useSubtitleStore = create<SubtitleStore>((set, get) => ({
         const primary = entry.primary
         const filteredIds = primary.matchedSegmentIds.filter((id) => validSeg.has(id))
         const topPct = confidenceToPercent(primary.confidence)
-        return {
+        let next: SubtitleLine = {
           ...line,
           english: primary.english.trim(),
           matchedSegmentIds: filteredIds,
@@ -166,6 +268,22 @@ export const useSubtitleStore = create<SubtitleStore>((set, get) => ({
           problems: mergeAlignmentProblems(line.problems, entry.problems),
           manuallyEdited: false
         }
+        if (entry.attemptBestValidated) {
+          const payload = buildAiAttemptPayloadFromWritableRow(entry.attemptBestValidated, {
+            source: entry.attemptSource ?? 'retry',
+            contextTier: entry.attemptContextTier,
+            thresholdPct: confidenceThresholdPct,
+            problems: entry.problems
+          })
+          const full: SubtitleAiAttempt = {
+            ...payload,
+            id: newAiAttemptId(),
+            createdAt: Date.now(),
+            matchedSegmentIds: filteredIds
+          }
+          next = pushAttempt(next, full)
+        }
+        return next
       })
     }))
   },

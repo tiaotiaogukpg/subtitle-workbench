@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useId, useRef, useState, type ChangeEvent, type JSX, type MouseEvent, type ReactNode, type RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useId, useMemo, useRef, useState, type ChangeEvent, type JSX, type MouseEvent, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { downloadBilingualSrt } from './lib/srtExporter'
 import { parseSrt } from './lib/srtParser'
@@ -9,7 +9,7 @@ import { AlignmentReviewPanel } from './components/AlignmentReviewPanel'
 import { VerticalStackSplitter } from './components/VerticalStackSplitter'
 import { useHistoryStore } from './store/historyStore'
 import { useScriptPoolStore } from './store/scriptPoolStore'
-import { startAlignmentSession } from './lib/alignment'
+import { startAlignmentSession, markDuplicateAttemptKeys, suggestBestAttempt, runSingleSubtitleAlignmentRetry } from './lib/alignment'
 import { formatProblemForDisplay } from './lib/alignment/applyPolicy'
 import {
   isAlignmentSessionActive,
@@ -269,7 +269,11 @@ function App(): JSX.Element {
         <section className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(8.25rem,0.27fr)_minmax(0,1fr)_minmax(7rem,0.23fr)] grid-rows-[minmax(0,1fr)] gap-5 overflow-hidden">
           <SubtitleNavigator activeId={activeId} onSeekToSubtitle={setCurrentTimeMs} />
 
-          <AlignmentWorkspace />
+          <AlignmentWorkspace
+            alignmentModel={settings.model}
+            alignmentConfidenceThreshold={settings.confidenceThreshold}
+            alignmentSessionBusy={alignmentBusy}
+          />
 
           <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
             <VerticalStackSplitter
@@ -482,13 +486,75 @@ function SubtitleNavigator({
   )
 }
 
-function AlignmentWorkspace(): JSX.Element {
+function AlignmentWorkspace({
+  alignmentModel,
+  alignmentConfidenceThreshold,
+  alignmentSessionBusy
+}: {
+  alignmentModel: string
+  alignmentConfidenceThreshold: number
+  alignmentSessionBusy: boolean
+}): JSX.Element {
   const selected = useSubtitleStore((s) => selectCurrentSubtitle(s))
+  const subtitles = useSubtitleStore((s) => s.subtitles)
+  const segments = useScriptPoolStore((s) => s.segments)
   const updateSubtitle = useSubtitleStore((s) => s.updateSubtitle)
   const replaceEnglish = useSubtitleStore((s) => s.replaceEnglish)
   const updateConfidence = useSubtitleStore((s) => s.updateConfidence)
+  const applyAiAttempt = useSubtitleStore((s) => s.applySubtitleAiAttempt)
+  const removeAiAttempt = useSubtitleStore((s) => s.removeSubtitleAiAttempt)
+  const [lineRetryBusy, setLineRetryBusy] = useState<'idle' | 'narrow' | 'wide'>('idle')
   const chineseEditStartRef = useRef<{ subtitleId: number; text: string } | null>(null)
   const englishEditStartRef = useRef<{ subtitleId: number; text: string } | null>(null)
+
+  const suggested = useMemo(() => {
+    if (!selected) return null
+    return suggestBestAttempt(selected, subtitles)
+  }, [selected, subtitles])
+
+  const dupIds = useMemo(() => {
+    if (!selected) return new Map<string, boolean>()
+    return markDuplicateAttemptKeys(selected.aiAttempts ?? [])
+  }, [selected])
+
+  function goNextReview(): void {
+    if (!selected) return
+    const idx = subtitles.findIndex((l) => l.id === selected.id)
+    if (idx < 0) return
+    for (let step = 1; step <= subtitles.length; step++) {
+      const j = (idx + step) % subtitles.length
+      const target = subtitles[j]!
+      if (
+        target.status === 'needs_review' ||
+        target.status === 'low_confidence' ||
+        (target.status === 'unmatched' && !target.english.trim())
+      ) {
+        useSubtitleStore.getState().selectSubtitle(target.id)
+        return
+      }
+    }
+  }
+
+  async function runLineRetry(wide: boolean): Promise<void> {
+    if (!selected || lineRetryBusy !== 'idle' || alignmentSessionBusy) return
+    const lineId = selected.id
+    setLineRetryBusy(wide ? 'wide' : 'narrow')
+    try {
+      const st = useSubtitleStore.getState()
+      const fresh = st.subtitles.find((l) => l.id === lineId)
+      if (!fresh) return
+      await runSingleSubtitleAlignmentRetry({
+        line: fresh,
+        subtitles: st.subtitles,
+        segments,
+        model: alignmentModel,
+        confidenceThresholdPct: alignmentConfidenceThreshold,
+        wide
+      })
+    } finally {
+      setLineRetryBusy('idle')
+    }
+  }
 
   if (!selected) {
     return (
@@ -640,6 +706,123 @@ function AlignmentWorkspace(): JSX.Element {
             })}
           </div>
         </div>
+
+        <section className="rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] p-3">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="type-panel-title">复查队列 · AI 尝试</h2>
+            <span className="type-caption text-meta">{line.aiAttempts?.length ?? 0} 条</span>
+          </div>
+          <div className="mb-3 flex flex-wrap gap-2">
+            <button type="button" className="toolbar-btn toolbar-btn--panel text-[12px]" onClick={() => goNextReview()}>
+              下一条待复查
+            </button>
+            <button
+              type="button"
+              className="toolbar-btn toolbar-btn--panel text-[12px]"
+              disabled={lineRetryBusy !== 'idle' || alignmentSessionBusy}
+              onClick={() => void runLineRetry(false)}
+            >
+              {lineRetryBusy === 'narrow' ? '重试中…' : '重试本行'}
+            </button>
+            <button
+              type="button"
+              className="toolbar-btn toolbar-btn--panel text-[12px]"
+              disabled={lineRetryBusy !== 'idle' || alignmentSessionBusy}
+              onClick={() => void runLineRetry(true)}
+            >
+              {lineRetryBusy === 'wide' ? '扩窗重试中…' : '扩窗重试'}
+            </button>
+            <button
+              type="button"
+              className="toolbar-btn toolbar-btn--panel text-[12px]"
+              disabled={!suggested}
+              onClick={() => {
+                if (!suggested) return
+                applyAiAttempt(line.id, suggested.id, alignmentConfidenceThreshold)
+              }}
+            >
+              应用推荐尝试
+            </button>
+            <button
+              type="button"
+              className="toolbar-btn toolbar-btn--panel text-[12px]"
+              disabled={!line.english.trim()}
+              onClick={() => updateSubtitle(line.id, { status: 'confirmed' })}
+            >
+              标记已确认
+            </button>
+          </div>
+          <p className="type-caption mb-1 text-meta">当前应用（confidence {line.confidence}%）</p>
+          <p className="type-caption mb-3 line-clamp-3 text-secondary" title={line.english}>
+            {line.english.trim() ? line.english : '（空）'}
+          </p>
+          <ul className="max-h-60 space-y-2 overflow-y-auto pr-0.5">
+            {[...(line.aiAttempts ?? [])]
+              .sort((a, b) => b.createdAt - a.createdAt)
+              .map((att) => {
+                const isPick = suggested?.id === att.id
+                const isDup = dupIds.get(att.id)
+                return (
+                  <li
+                    key={att.id}
+                    className={`rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] p-2 text-[12px] leading-snug ${
+                      isPick ? 'ring-1 ring-amber-500/50' : ''
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-meta">
+                          <span className="font-mono tabular-nums">{new Date(att.createdAt).toLocaleString()}</span>
+                          <span>{att.source}</span>
+                          {att.contextTier != null ? <span>tier {att.contextTier}</span> : null}
+                          <span>{att.confidence}%</span>
+                          {isPick ? <span className="text-amber-800 dark:text-amber-200">推荐</span> : null}
+                          {isDup ? <span className="text-secondary">duplicate</span> : null}
+                        </div>
+                        {att.problems.length > 0 ? (
+                          <ul className="list-inside list-disc text-[11px] text-secondary">
+                            {att.problems.slice(0, 6).map((p, i) => (
+                              <li key={i}>{p}</li>
+                            ))}
+                          </ul>
+                        ) : null}
+                        <p className="whitespace-pre-wrap break-words text-primary">
+                          {att.english.trim() ? att.english : '（空 / 失败摘要）'}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 flex-col gap-1">
+                        <button
+                          type="button"
+                          className="toolbar-btn toolbar-btn--panel px-2 py-1 text-[11px]"
+                          disabled={!att.english.trim()}
+                          onClick={() => applyAiAttempt(line.id, att.id, alignmentConfidenceThreshold)}
+                        >
+                          应用
+                        </button>
+                        <button
+                          type="button"
+                          className="toolbar-btn toolbar-btn--panel px-2 py-1 text-[11px]"
+                          onClick={() => void navigator.clipboard?.writeText(att.english)}
+                        >
+                          复制
+                        </button>
+                        <button
+                          type="button"
+                          className="toolbar-btn toolbar-btn--panel px-2 py-1 text-[11px]"
+                          onClick={() => removeAiAttempt(line.id, att.id)}
+                        >
+                          删除
+                        </button>
+                      </div>
+                    </div>
+                  </li>
+                )
+              })}
+          </ul>
+          {(line.aiAttempts?.length ?? 0) === 0 ? (
+            <p className="type-caption mt-2 text-meta">尚无尝试记录；整文件对齐或单行重试后会出现在此。</p>
+          ) : null}
+        </section>
       </div>
     </section>
   )

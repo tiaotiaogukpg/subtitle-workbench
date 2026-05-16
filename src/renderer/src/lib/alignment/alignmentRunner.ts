@@ -22,6 +22,7 @@ import {
 import { runRetryCoverageAlignmentBatch } from './retryCoveragePass'
 import { runSmallBatchAlignment } from './smallBatchPipeline'
 import type { AlignmentMatchValidated } from './types'
+import { buildFailedAiAttemptPayload } from './aiAttempts'
 import { useAlignmentPreviewStore } from '../../store/alignmentPreviewStore'
 import { useAlignmentSessionStore } from '../../store/alignmentSessionStore'
 import { useScriptPoolStore } from '../../store/scriptPoolStore'
@@ -60,7 +61,8 @@ function countBatchStats(
 function applyFullFileBatchResults(
   batchSubtitleIds: number[],
   validated: AlignmentMatchValidated[],
-  thresholdPct: number
+  thresholdPct: number,
+  attemptMeta: { attemptSource: 'initial' | 'retry'; contextTier?: number }
 ): import('./types').AlignmentMatchRow[] {
   const subtitleStore = useSubtitleStore.getState()
   const aiEntries: Array<{
@@ -69,6 +71,9 @@ function applyFullFileBatchResults(
     status: SubtitleStatus
     problems: string[]
     candidates: import('../../types').CandidateMatch[]
+    attemptBestValidated: AlignmentMatchValidated
+    attemptSource: 'initial' | 'retry'
+    attemptContextTier?: number
   }> = []
   const linesWithoutAiWrite: Array<{
     subtitleId: number
@@ -86,7 +91,16 @@ function applyFullFileBatchResults(
       const status = deriveStatusAfterAI(best, thresholdPct)
       const problems = readableProblemsForAIRow(best, thresholdPct)
       const candidates = buildCandidatesForSubtitle(rowsForSub, best)
-      aiEntries.push({ subtitleId, primary: row, status, problems, candidates })
+      aiEntries.push({
+        subtitleId,
+        primary: row,
+        status,
+        problems,
+        candidates,
+        attemptBestValidated: best,
+        attemptSource: attemptMeta.attemptSource,
+        attemptContextTier: attemptMeta.contextTier
+      })
     } else {
       const probs = diagnosticProblemsForFailedAlignment(rowsForSub)
       linesWithoutAiWrite.push({
@@ -99,13 +113,24 @@ function applyFullFileBatchResults(
   }
 
   if (aiEntries.length > 0) {
-    subtitleStore.applyFullFileAIMatchBatch(aiEntries)
+    subtitleStore.applyFullFileAIMatchBatch(aiEntries, thresholdPct)
   }
   if (linesWithoutAiWrite.length > 0) {
     const skip = new Set(aiEntries.map((e) => e.subtitleId))
     const onlyReview = linesWithoutAiWrite.filter((f) => !skip.has(f.subtitleId))
     if (onlyReview.length > 0) {
       subtitleStore.applyAlignmentReviewStates(onlyReview)
+      subtitleStore.appendSubtitleAiAttempts(
+        onlyReview.map((f) => ({
+          subtitleId: f.subtitleId,
+          attempt: buildFailedAiAttemptPayload({
+            source: attemptMeta.attemptSource,
+            problems: f.problems,
+            contextTier: attemptMeta.contextTier,
+            reason: 'no_applyable_structural_match'
+          })
+        }))
+      )
     }
   }
 
@@ -115,7 +140,8 @@ function applyFullFileBatchResults(
 function applyRetryCoverageBatchResults(
   batchSubtitleIds: number[],
   validated: AlignmentMatchValidated[],
-  thresholdPct: number
+  thresholdPct: number,
+  attemptMeta: { attemptSource: 'initial' | 'retry'; contextTier?: number }
 ): number {
   const subtitleStore = useSubtitleStore.getState()
   const subtitles = subtitleStore.subtitles
@@ -125,6 +151,9 @@ function applyRetryCoverageBatchResults(
     status: SubtitleStatus
     problems: string[]
     candidates: import('../../types').CandidateMatch[]
+    attemptBestValidated: AlignmentMatchValidated
+    attemptSource: 'initial' | 'retry'
+    attemptContextTier?: number
   }> = []
   const linesWithoutAiWrite: Array<{
     subtitleId: number
@@ -145,7 +174,16 @@ function applyRetryCoverageBatchResults(
       const status = deriveStatusAfterAI(best, thresholdPct)
       const problems = readableProblemsForAIRow(best, thresholdPct)
       const candidates = buildCandidatesForSubtitle(rowsForSub, best)
-      aiEntries.push({ subtitleId, primary: row, status, problems, candidates })
+      aiEntries.push({
+        subtitleId,
+        primary: row,
+        status,
+        problems,
+        candidates,
+        attemptBestValidated: best,
+        attemptSource: attemptMeta.attemptSource,
+        attemptContextTier: attemptMeta.contextTier
+      })
     } else {
       let probs = diagnosticProblemsForFailedAlignment(rowsForSub)
       const isSemantic = rowsForSub.some((r) => r.validationFlags.includes('semantic_undersegmentation'))
@@ -162,13 +200,24 @@ function applyRetryCoverageBatchResults(
   }
 
   if (aiEntries.length > 0) {
-    subtitleStore.applyRetryCoverageMatchBatch(aiEntries)
+    subtitleStore.applyRetryCoverageMatchBatch(aiEntries, thresholdPct)
   }
   if (linesWithoutAiWrite.length > 0) {
     const skip = new Set(aiEntries.map((e) => e.subtitleId))
     const onlyReview = linesWithoutAiWrite.filter((f) => !skip.has(f.subtitleId))
     if (onlyReview.length > 0) {
       subtitleStore.applyAlignmentReviewStates(onlyReview)
+      subtitleStore.appendSubtitleAiAttempts(
+        onlyReview.map((f) => ({
+          subtitleId: f.subtitleId,
+          attempt: buildFailedAiAttemptPayload({
+            source: attemptMeta.attemptSource,
+            problems: f.problems,
+            contextTier: attemptMeta.contextTier,
+            reason: 'no_applyable_structural_match'
+          })
+        }))
+      )
     }
   }
 
@@ -235,7 +284,10 @@ async function runFullFileAlignment(
       return
     }
 
-    applyFullFileBatchResults(result.batchSubtitleIds, result.validated, config.confidenceThreshold)
+    applyFullFileBatchResults(result.batchSubtitleIds, result.validated, config.confidenceThreshold, {
+      attemptSource: 'initial',
+      contextTier: result.debug.timeRatioContext?.windowTier
+    })
 
     const stats = countBatchStats(
       result.batchSubtitleIds,
@@ -347,7 +399,11 @@ async function runFullFileAlignment(
       const written = applyRetryCoverageBatchResults(
         result.batchSubtitleIds,
         result.validated,
-        config.confidenceThreshold
+        config.confidenceThreshold,
+        {
+          attemptSource: 'retry',
+          contextTier: result.debug.timeRatioContext?.windowTier
+        }
       )
       if (useUiSettingsStore.getState().debugMode) {
         console.info('[retry-coverage]', 'apply.after-batch', {
