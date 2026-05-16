@@ -1,13 +1,24 @@
 import type { SubtitleLine } from '../types'
 
+/** @deprecated 使用 {@link buildSrtExportFilename}（`exportMode: 'bilingual'`） */
 export const BILINGUAL_SRT_FILENAME = 'bilingual-subtitles.srt'
+
+export type ExportMode = 'bilingual' | 'chinese_only' | 'english_only'
 
 export type BilingualSubtitleOrder = 'chineseFirst' | 'englishFirst'
 
-export interface ExportBilingualSrtOptions {
+export interface ExportSrtOptions {
+  exportMode?: ExportMode
   subtitleOrder: BilingualSubtitleOrder
   separateLines: boolean
+  /** 仅 `english_only` 时生效；默认跳过英文为空的整条字幕 */
+  skipEmptyEnglishLines?: boolean
+  /** 不含扩展名；默认 `subtitles` */
+  baseFilename?: string
 }
+
+/** @deprecated 使用 {@link ExportSrtOptions} */
+export type ExportBilingualSrtOptions = ExportSrtOptions
 
 function pad2(n: number): string {
   return String(n).padStart(2, '0')
@@ -54,17 +65,68 @@ function buildBilingualCueBody(
   return `${a}\n${b}`
 }
 
+export interface ComposeCueResult {
+  body: string
+  include: boolean
+}
+
 /**
- * 将字幕导出为双语 SRT 文本（UTF-8 字符串，不含 BOM）。
+ * 按导出模式合成单条 cue 正文；`include === false` 时不写入该时间轴。
  */
-export function exportBilingualSrt(subtitles: SubtitleLine[], options: ExportBilingualSrtOptions): string {
-  const { subtitleOrder, separateLines } = options
+export function composeCueBodyForExport(line: SubtitleLine, options: ExportSrtOptions): ComposeCueResult {
+  const exportMode = options.exportMode ?? 'bilingual'
+  const skipEmptyEnglishLines = options.skipEmptyEnglishLines ?? true
+  const zhRaw = line.chinese ?? ''
+  const enRaw = line.english ?? ''
+
+  if (exportMode === 'bilingual') {
+    const body = buildBilingualCueBody(zhRaw, enRaw, options.subtitleOrder, options.separateLines)
+    return { body, include: body.length > 0 }
+  }
+
+  if (exportMode === 'chinese_only') {
+    const body = zhRaw.trimEnd()
+    return { body, include: body.trim().length > 0 }
+  }
+
+  const enTrimmed = enRaw.trim()
+  if (enTrimmed.length === 0) {
+    if (skipEmptyEnglishLines) {
+      return { body: '', include: false }
+    }
+    return { body: '', include: true }
+  }
+
+  return { body: enRaw.trimEnd(), include: true }
+}
+
+/** 根据导出模式生成推荐下载文件名。 */
+export function buildSrtExportFilename(exportMode: ExportMode, baseFilename = 'subtitles'): string {
+  const base = baseFilename
+    .replace(/\.srt$/i, '')
+    .replace(/\.(bilingual|en|zh)$/i, '')
+    .trim() || 'subtitles'
+
+  switch (exportMode) {
+    case 'bilingual':
+      return `${base}.bilingual.srt`
+    case 'chinese_only':
+      return `${base}.zh.srt`
+    case 'english_only':
+      return `${base}.en.srt`
+  }
+}
+
+/**
+ * 将字幕导出为 SRT 文本（UTF-8 字符串，不含 BOM）。
+ */
+export function exportSrt(subtitles: SubtitleLine[], options: ExportSrtOptions): string {
   const blocks: string[] = []
   let index = 1
 
   for (const line of subtitles) {
-    const body = buildBilingualCueBody(line.chinese, line.english, subtitleOrder, separateLines)
-    if (!body) continue
+    const { body, include } = composeCueBodyForExport(line, options)
+    if (!include) continue
 
     const start = msToSrtTimestamp(line.start)
     const end = msToSrtTimestamp(line.end)
@@ -74,17 +136,32 @@ export function exportBilingualSrt(subtitles: SubtitleLine[], options: ExportBil
   return blocks.length > 0 ? `${blocks.join('\n\n')}\n` : ''
 }
 
-/** 浏览器内触发下载双语 SRT（固定默认文件名）。 */
-export function downloadBilingualSrt(subtitles: SubtitleLine[], options: ExportBilingualSrtOptions): void {
-  const text = exportBilingualSrt(subtitles, options)
+/**
+ * 将字幕导出为双语 SRT 文本（UTF-8 字符串，不含 BOM）。
+ * @deprecated 使用 {@link exportSrt}（默认或显式 `exportMode: 'bilingual'`）
+ */
+export function exportBilingualSrt(subtitles: SubtitleLine[], options: ExportSrtOptions): string {
+  return exportSrt(subtitles, { ...options, exportMode: 'bilingual' })
+}
+
+/** 浏览器内触发 SRT 下载。 */
+export function downloadSrt(subtitles: SubtitleLine[], options: ExportSrtOptions): void {
+  const exportMode = options.exportMode ?? 'bilingual'
+  const text = exportSrt(subtitles, options)
+  const filename = buildSrtExportFilename(exportMode, options.baseFilename ?? 'subtitles')
   const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = BILINGUAL_SRT_FILENAME
+  a.download = filename
   a.rel = 'noopener'
   document.body.appendChild(a)
   a.click()
   a.remove()
   URL.revokeObjectURL(url)
+}
+
+/** 浏览器内触发下载双语 SRT。 */
+export function downloadBilingualSrt(subtitles: SubtitleLine[], options: ExportSrtOptions): void {
+  downloadSrt(subtitles, { ...options, exportMode: 'bilingual' })
 }

@@ -239,6 +239,58 @@
   --color-modal-close-fg: rgba(255, 255, 255, 0.9);
   --color-modal-close-hover-bg: #dc2626;
   --color-modal-close-hover-fg: #ffffff;
+
+  /* Phase 4B · surfaces & controls (theme-aware text) */
+  --color-phase4b-detail-border: rgba(255, 255, 255, 0.1);
+  --color-phase4b-detail-bg: rgba(0, 0, 0, 0.24);
+  --color-phase4b-detail-scrollbar: rgba(255, 255, 255, 0.2);
+  --color-phase4b-pre-border: rgba(255, 255, 255, 0.08);
+  --color-phase4b-pre-bg: rgba(0, 0, 0, 0.22);
+  --color-phase4b-muted: var(--color-text-meta);
+  --color-phase4b-body: var(--color-text-primary);
+  --color-phase4b-btn-border: rgba(255, 255, 255, 0.12);
+  --color-phase4b-btn-text: rgba(255, 255, 255, 0.9);
+  --color-phase4b-btn-text-hover: rgba(255, 255, 255, 0.96);
+  --color-phase4b-chip-applied-text: rgba(167, 243, 208, 0.95);
+  --color-phase4b-chip-applied-bg: rgba(16, 185, 129, 0.14);
+  --color-phase4b-chip-applied-border: rgba(52, 211, 153, 0.28);
+  --color-phase4b-chip-pinned-text: rgba(186, 230, 253, 0.96);
+  --color-phase4b-chip-pinned-bg: rgba(56, 189, 248, 0.12);
+  --color-phase4b-chip-pinned-border: rgba(125, 211, 252, 0.28);
+  --color-phase4b-wide-hint-list-text: rgba(255, 255, 255, 0.76);
+  --color-phase4b-progress-track: rgba(255, 255, 255, 0.1);
+  --color-phase4b-progress-fill-start: rgba(107, 156, 255, 0.55);
+  --color-phase4b-progress-fill-end: rgba(107, 156, 255, 0.95);
+  --color-phase4b-compare-overlay: var(--color-modal-backdrop);
+  --color-phase4b-compare-dialog-bg: var(--color-bg-panel);
+  --color-phase4b-compare-dialog-head-bg: var(--color-bg-elevated);
+  --color-phase4b-compare-dialog-border: var(--color-border-subtle);
+  --color-phase4b-compare-block-bg: var(--color-bg-elevated);
+  --color-phase4b-diff-del-text: rgb(248 113 113);
+  --color-phase4b-diff-ins-bg: rgba(34, 197, 94, 0.14);
+  --color-phase4b-diff-ins-text: rgb(134 239 172);
+  --color-switch-thumb: #f8fafc;
+  --color-focus-ring: var(--color-accent);
+
+  /* Semantic aliases */
+  --app-bg: var(--color-bg-app);
+  --panel-bg: var(--color-bg-panel);
+  --panel-bg-subtle: var(--color-bg-elevated);
+  --card-bg: var(--color-card-bg);
+  --card-bg-hover: var(--color-card-hover-bg);
+  --card-bg-selected: var(--color-list-selected-bg);
+  --border-color: var(--color-border);
+  --text-primary: var(--color-text-primary);
+  --text-secondary: var(--color-text-secondary);
+  --text-muted: var(--color-text-meta);
+  --accent: var(--color-accent);
+  --warning-bg: var(--color-phase4b-hint-bg);
+  --warning-border: var(--color-phase4b-hint-border);
+  --warning-text: var(--color-phase4b-hint-title);
+  --danger-bg: var(--color-badge-unmatched-bg);
+  --danger-text: var(--color-danger);
+  --success-bg: var(--color-badge-confirmed-bg);
+  --success-text: var(--color-success);
 }
 
 [data-theme='light'] {
@@ -462,4 +514,54 @@
   --color-modal-close-fg: var(--color-text-secondary);
   --color-modal-close-hover-bg: #dc2626;
   --color-modal-close-hover-fg: #ffffff;
+
+  --color-phase4b-detail-border: #e2e8f0;
+  --color-phase4b-detail-bg: #f8fafc;
+  --color-phase4b-detail-scrollbar: rgba(15, 23, 42, 0.22);
+  --color-phase4b-pre-border: #e2e8f0;
+  --color-phase4b-pre-bg: #f1f5f9;
+  --color-phase4b-muted: var(--color-text-meta);
+  --color-phase4b-body: var(--color-text-primary);
+  --color-phase4b-btn-border: #cbd5e1;
+  --color-phase4b-btn-text: var(--color-text-primary);
+  --color-phase4b-btn-text-hover: var(--color-text-primary);
+  --color-phase4b-chip-applied-text: #047857;
+  --color-phase4b-chip-applied-bg: rgba(5, 150, 105, 0.12);
+  --color-phase4b-chip-applied-border: rgba(5, 150, 105, 0.28);
+  --color-phase4b-chip-pinned-text: #0369a1;
+  --color-phase4b-chip-pinned-bg: rgba(2, 132, 199, 0.1);
+  --color-phase4b-chip-pinned-border: rgba(2, 132, 199, 0.28);
+  --color-phase4b-wide-hint-list-text: var(--color-text-secondary);
+  --color-phase4b-progress-track: #e2e8f0;
+  --color-phase4b-progress-fill-start: rgba(2, 132, 199, 0.45);
+  --color-phase4b-progress-fill-end: rgba(2, 132, 199, 0.88);
+  --color-phase4b-compare-overlay: var(--color-modal-backdrop);
+  --color-phase4b-compare-dialog-bg: var(--color-bg-panel);
+  --color-phase4b-compare-dialog-head-bg: var(--color-bg-elevated);
+  --color-phase4b-compare-dialog-border: var(--color-border-subtle);
+  --color-phase4b-compare-block-bg: var(--color-bg-elevated);
+  --color-phase4b-diff-del-text: #dc2626;
+  --color-phase4b-diff-ins-bg: rgba(5, 150, 105, 0.14);
+  --color-phase4b-diff-ins-text: #047857;
+  --color-switch-thumb: #ffffff;
+  --color-focus-ring: var(--color-accent);
+
+  --app-bg: var(--color-bg-app);
+  --panel-bg: var(--color-bg-panel);
+  --panel-bg-subtle: var(--color-bg-elevated);
+  --card-bg: var(--color-card-bg);
+  --card-bg-hover: var(--color-card-hover-bg);
+  --card-bg-selected: var(--color-list-selected-bg);
+  --border-color: var(--color-border);
+  --text-primary: var(--color-text-primary);
+  --text-secondary: var(--color-text-secondary);
+  --text-muted: var(--color-text-meta);
+  --accent: var(--color-accent);
+  --warning-bg: var(--color-phase4b-hint-bg);
+  --warning-border: var(--color-phase4b-hint-border);
+  --warning-text: var(--color-phase4b-hint-title);
+  --danger-bg: var(--color-badge-unmatched-bg);
+  --danger-text: var(--color-danger);
+  --success-bg: var(--color-badge-confirmed-bg);
+  --success-text: var(--color-success);
 }

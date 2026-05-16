@@ -127,7 +127,7 @@ export function AlignmentReviewPanel({ compact = false }: { compact?: boolean })
       ) : null}
 
       {debugMode && debug?.modelParseWarnings && debug.modelParseWarnings.length > 0 ? (
-        <div className="mt-2 rounded-lg border border-amber-500/35 bg-amber-500/10 p-2 text-[11px] text-amber-950 dark:text-amber-50">
+        <div className="review-callout-warning mt-2 rounded-lg p-2 text-[11px]">
           <p className="text-meta mb-1 font-medium">模型 JSON 解析（调试）</p>
           <ul className="space-y-1.5">
             {debug.modelParseWarnings.map((w) => (

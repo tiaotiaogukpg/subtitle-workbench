@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useId, useMemo, useRef, useState, type ChangeEvent, type JSX, type MouseEvent, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import { downloadBilingualSrt } from './lib/srtExporter'
+import { downloadSrt, exportSrt, type ExportMode } from './lib/srtExporter'
 import { parseSrt } from './lib/srtParser'
 import { parseMixedTranscript } from './lib/mixedTranscriptParser'
 import { EnglishScriptPoolPanel } from './components/EnglishScriptPoolPanel'
@@ -131,17 +131,38 @@ function App(): JSX.Element {
     theme: readStoredTheme()
   }))
 
-  const handleExportBilingualSrt = useCallback(() => {
-    const gate = canExportProjectData()
-    if (!gate.ok) {
-      const proceed = window.confirm(`${gate.reason}\n\n仍要继续导出吗？`)
-      if (!proceed) return
-    }
-    downloadBilingualSrt(subtitles, {
-      subtitleOrder: settings.subtitleOrder,
-      separateLines: settings.separateLines
-    })
-  }, [subtitles, settings.subtitleOrder, settings.separateLines])
+  const handleExportSrt = useCallback(
+    (exportMode: ExportMode) => {
+      if (subtitles.length === 0) {
+        window.alert('当前没有可导出的字幕。请先导入中文 SRT。')
+        return
+      }
+      const gate = canExportProjectData()
+      if (!gate.ok) {
+        const proceed = window.confirm(`${gate.reason}\n\n仍要继续导出吗？`)
+        if (!proceed) return
+      }
+      const exportOptions = {
+        exportMode,
+        subtitleOrder: settings.subtitleOrder,
+        separateLines: settings.separateLines
+      }
+      const label =
+        exportMode === 'bilingual' ? '双语' : exportMode === 'chinese_only' ? '中文' : '英文'
+      const text = exportSrt(subtitles, exportOptions)
+      if (!text.trim()) {
+        window.alert(`当前没有可导出的${label}字幕内容。`)
+        return
+      }
+      try {
+        downloadSrt(subtitles, exportOptions)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        window.alert(`导出失败：${msg}`)
+      }
+    },
+    [subtitles, settings.subtitleOrder, settings.separateLines]
+  )
 
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTimeMs, setCurrentTimeMs] = useState(0)
@@ -296,7 +317,7 @@ function App(): JSX.Element {
           settingsOpen={settingsOpen}
           onChineseSrtFileChange={handleChineseSrtFileChange}
           onEnglishTxtFileChange={handleEnglishTxtFileChange}
-          onExportBilingualSrt={handleExportBilingualSrt}
+          onExportSrt={handleExportSrt}
           onOpenAlignment={openAlignmentModal}
           onOpenSettings={openSettings}
         />
@@ -357,11 +378,113 @@ function App(): JSX.Element {
   )
 }
 
+const EXPORT_MENU_ITEMS: { mode: ExportMode; label: string }[] = [
+  { mode: 'bilingual', label: '导出双语 SRT' },
+  { mode: 'chinese_only', label: '导出中文字幕 SRT' },
+  { mode: 'english_only', label: '导出英文字幕 SRT' }
+]
+
+function ExportToolbarMenu({
+  onExport,
+  aiTaskBusy
+}: {
+  onExport: (mode: ExportMode) => void
+  aiTaskBusy: boolean
+}): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const menuId = useId()
+  const [panelStyle, setPanelStyle] = useState<React.CSSProperties>({})
+
+  useEffect(() => {
+    if (!open) return
+    const onDocPointer = (event: globalThis.MouseEvent): void => {
+      const target = event.target as Node
+      if (rootRef.current?.contains(target)) return
+      if (panelRef.current?.contains(target)) return
+      setOpen(false)
+    }
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    const timer = window.setTimeout(() => {
+      document.addEventListener('click', onDocPointer)
+    }, 0)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      window.clearTimeout(timer)
+      document.removeEventListener('click', onDocPointer)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  useLayoutEffect(() => {
+    if (!open) return
+    const trigger = rootRef.current?.querySelector<HTMLButtonElement>('.toolbar-export-menu__trigger')
+    if (!trigger) return
+    const rect = trigger.getBoundingClientRect()
+    setPanelStyle({
+      top: rect.bottom + 4,
+      left: rect.left,
+      minWidth: Math.max(184, rect.width)
+    })
+  }, [open])
+
+  const menuPanel =
+    open &&
+    createPortal(
+      <div
+        ref={panelRef}
+        id={menuId}
+        className="toolbar-export-menu__panel"
+        role="menu"
+        style={panelStyle}
+      >
+        {EXPORT_MENU_ITEMS.map(({ mode, label }) => (
+          <button
+            key={mode}
+            type="button"
+            className="toolbar-export-menu__item"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false)
+              onExport(mode)
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>,
+      document.body
+    )
+
+  return (
+    <div ref={rootRef} className="toolbar-export-menu">
+      <button
+        type="button"
+        className={`toolbar-btn toolbar-export-menu__trigger${open ? ' toolbar-btn--active' : ''}`}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        aria-controls={menuId}
+        title={aiTaskBusy ? 'AI 任务进行中，导出内容可能不完整' : undefined}
+        onClick={() => setOpen((v) => !v)}
+      >
+        导出
+        <span className="toolbar-export-menu__caret" aria-hidden>
+          ▼
+        </span>
+      </button>
+      {menuPanel}
+    </div>
+  )
+}
+
 function TopBar({
   settingsOpen,
   onOpenSettings,
   onOpenAlignment,
-  onExportBilingualSrt,
+  onExportSrt,
   alignmentBusy,
   aiTaskBusy,
   chineseSrtInputRef,
@@ -372,7 +495,7 @@ function TopBar({
   settingsOpen: boolean
   onOpenSettings: () => void
   onOpenAlignment: () => void
-  onExportBilingualSrt: () => void
+  onExportSrt: (mode: ExportMode) => void
   alignmentBusy: boolean
   aiTaskBusy: boolean
   chineseSrtInputRef: RefObject<HTMLInputElement | null>
@@ -432,9 +555,7 @@ function TopBar({
         >
           导入英文文稿
         </button>
-        <button type="button" className="toolbar-btn" onClick={onExportBilingualSrt}>
-          导出
-        </button>
+        <ExportToolbarMenu aiTaskBusy={aiTaskBusy} onExport={onExportSrt} />
         <button
           type="button"
           className={`toolbar-btn${settingsOpen ? ' toolbar-btn--active' : ''}`}
