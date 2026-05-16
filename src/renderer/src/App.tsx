@@ -6,17 +6,30 @@ import { parseMixedTranscript } from './lib/mixedTranscriptParser'
 import { EnglishScriptPoolPanel } from './components/EnglishScriptPoolPanel'
 import { AiAlignmentWorkflowModal } from './components/AiAlignmentWorkflowModal'
 import { AlignmentReviewPanel } from './components/AlignmentReviewPanel'
+import { AlignmentAttemptsColumn } from './components/alignment/AlignmentAttemptsColumn'
 import { VerticalStackSplitter } from './components/VerticalStackSplitter'
 import { useHistoryStore } from './store/historyStore'
 import { useScriptPoolStore } from './store/scriptPoolStore'
-import { startAlignmentSession, markDuplicateAttemptKeys, suggestBestAttempt, runSingleSubtitleAlignmentRetry } from './lib/alignment'
+import {
+  advanceReviewQueueId,
+  buildGlobalReviewQueue,
+  computeAlignmentRisk,
+  isInAlignmentReviewQueue,
+  markDuplicateAttemptKeys,
+  runSingleSubtitleAlignmentRetry,
+  startAlignmentSession,
+  suggestBestAttempt
+} from './lib/alignment'
+import { segmentIdsEqual } from './lib/alignment/subtitleLineUtils'
 import { formatProblemForDisplay } from './lib/alignment/applyPolicy'
 import {
   isAlignmentSessionActive,
   useAlignmentSessionStore
 } from './store/alignmentSessionStore'
 import { selectCurrentSubtitle, useSubtitleStore } from './store/subtitleStore'
+import { useBatchRetrySessionStore } from './store/batchRetrySessionStore'
 import { useUiSettingsStore } from './store/uiSettingsStore'
+import { useAlignmentReviewHotkeys, type AlignmentReviewHotkeyHandlers } from './hooks/useAlignmentReviewHotkeys'
 import type { SettingsState, SubtitleStatus } from './types'
 import { DEFAULT_USER_SETTINGS } from '../../shared/settingsDefaults'
 
@@ -95,11 +108,6 @@ function compactTime(ms: number): string {
 
 function shortText(text: string, length = 42): string {
   return text.length > length ? `${text.slice(0, length)}...` : text
-}
-
-function segmentIdsEqual(a: string[], b: string[]): boolean {
-  if (a.length !== b.length) return false
-  return a.every((v, i) => v === b[i])
 }
 
 function App(): JSX.Element {
@@ -267,7 +275,11 @@ function App(): JSX.Element {
         />
 
         <section className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(8.25rem,0.27fr)_minmax(0,1fr)_minmax(7rem,0.23fr)] grid-rows-[minmax(0,1fr)] gap-5 overflow-hidden">
-          <SubtitleNavigator activeId={activeId} onSeekToSubtitle={setCurrentTimeMs} />
+          <SubtitleNavigator
+            activeId={activeId}
+            queueConfidenceThreshold={settings.confidenceThreshold}
+            onSeekToSubtitle={setCurrentTimeMs}
+          />
 
           <AlignmentWorkspace
             alignmentModel={settings.model}
@@ -426,17 +438,27 @@ function TopBar({
 
 function SubtitleNavigator({
   activeId,
+  queueConfidenceThreshold,
   onSeekToSubtitle
 }: {
   activeId?: number
+  queueConfidenceThreshold: number
   onSeekToSubtitle: (ms: number) => void
 }): JSX.Element {
   const subtitles = useSubtitleStore((s) => s.subtitles)
   const currentSubtitleId = useSubtitleStore((s) => s.currentSubtitleId)
   const selectSubtitle = useSubtitleStore((s) => s.selectSubtitle)
 
+  const queueIdSet = useMemo(() => {
+    const thr = queueConfidenceThreshold
+    return new Set(subtitles.filter((l) => isInAlignmentReviewQueue(l, { confidenceThresholdPct: thr })).map((l) => l.id))
+  }, [subtitles, queueConfidenceThreshold])
+
   return (
-    <aside className="app-panel app-panel--sidebar flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+    <aside
+      className="app-panel app-panel--sidebar flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
+      data-review-hotkeys="true"
+    >
       <div className="app-panel-header nav-panel-head px-3 py-2">
         <h2 className="ui-section-title">Subtitles</h2>
         <p className="type-caption mt-0.5">{subtitles.length} lines</p>
@@ -454,6 +476,10 @@ function SubtitleNavigator({
             const isSelected = subtitle.id === currentSubtitleId
             const isActive = subtitle.id === activeId
             const displayIndex = index + 1
+            const inQueue = queueIdSet.has(subtitle.id)
+            const risk = inQueue
+              ? computeAlignmentRisk(subtitle, { confidenceThresholdPct: queueConfidenceThreshold })
+              : null
 
             return (
               <button
@@ -476,6 +502,13 @@ function SubtitleNavigator({
                   </span>
                   <span className={`${meta.badgeClass} nav-badge-offset`}>{meta.label}</span>
                 </span>
+                {inQueue && risk ? (
+                  <span
+                    className={`review-queue-pip review-queue-pip--${risk.band}`}
+                    title={`复查队列 · 风险 ${risk.score} · ${risk.hints.join('；') || '无额外提示'}`}
+                    aria-hidden
+                  />
+                ) : null}
                 {isActive && <span className="subtitle-list-item-active-dot absolute right-2 top-2 h-1.5 w-1.5 rounded-full" />}
               </button>
             )
@@ -503,7 +536,12 @@ function AlignmentWorkspace({
   const updateConfidence = useSubtitleStore((s) => s.updateConfidence)
   const applyAiAttempt = useSubtitleStore((s) => s.applySubtitleAiAttempt)
   const removeAiAttempt = useSubtitleStore((s) => s.removeSubtitleAiAttempt)
+  const setPreferredSubtitleAttempt = useSubtitleStore((s) => s.setPreferredSubtitleAttempt)
   const [lineRetryBusy, setLineRetryBusy] = useState<'idle' | 'narrow' | 'wide'>('idle')
+  const [selectedAttemptIndex, setSelectedAttemptIndex] = useState(0)
+  const englishEditorRef = useRef<HTMLTextAreaElement>(null)
+  const lineIdRef = useRef<number | null>(null)
+  const hotkeyHandlersRef = useRef<AlignmentReviewHotkeyHandlers | null>(null)
   const chineseEditStartRef = useRef<{ subtitleId: number; text: string } | null>(null)
   const englishEditStartRef = useRef<{ subtitleId: number; text: string } | null>(null)
 
@@ -517,26 +555,39 @@ function AlignmentWorkspace({
     return markDuplicateAttemptKeys(selected.aiAttempts ?? [])
   }, [selected])
 
+  const reviewQueue = useMemo(
+    () => buildGlobalReviewQueue(subtitles, { confidenceThresholdPct: alignmentConfidenceThreshold }),
+    [subtitles, alignmentConfidenceThreshold]
+  )
+
+  const reviewQueueIds = useMemo(() => reviewQueue.map((e) => e.line.id), [reviewQueue])
+
+  const currentRisk = useMemo(() => {
+    if (!selected) return null
+    return computeAlignmentRisk(selected, { confidenceThresholdPct: alignmentConfidenceThreshold })
+  }, [selected, alignmentConfidenceThreshold])
+
+  const queuePosition = useMemo(() => {
+    if (!selected) return null
+    const i = reviewQueue.findIndex((e) => e.line.id === selected.id)
+    if (i < 0) return null
+    return { index: i + 1, total: reviewQueue.length }
+  }, [reviewQueue, selected])
+
   function goNextReview(): void {
-    if (!selected) return
-    const idx = subtitles.findIndex((l) => l.id === selected.id)
-    if (idx < 0) return
-    for (let step = 1; step <= subtitles.length; step++) {
-      const j = (idx + step) % subtitles.length
-      const target = subtitles[j]!
-      if (
-        target.status === 'needs_review' ||
-        target.status === 'low_confidence' ||
-        (target.status === 'unmatched' && !target.english.trim())
-      ) {
-        useSubtitleStore.getState().selectSubtitle(target.id)
-        return
-      }
-    }
+    const nextId = advanceReviewQueueId(reviewQueueIds, selected?.id ?? null, 1)
+    if (nextId != null) useSubtitleStore.getState().selectSubtitle(nextId)
+  }
+
+  function goPrevReview(): void {
+    const prevId = advanceReviewQueueId(reviewQueueIds, selected?.id ?? null, -1)
+    if (prevId != null) useSubtitleStore.getState().selectSubtitle(prevId)
   }
 
   async function runLineRetry(wide: boolean): Promise<void> {
     if (!selected || lineRetryBusy !== 'idle' || alignmentSessionBusy) return
+    const br = useBatchRetrySessionStore.getState().status
+    if (br === 'running' || br === 'paused') return
     const lineId = selected.id
     setLineRetryBusy(wide ? 'wide' : 'narrow')
     try {
@@ -556,6 +607,105 @@ function AlignmentWorkspace({
     }
   }
 
+  const selectedAttemptIndexRef = useRef(0)
+  selectedAttemptIndexRef.current = selectedAttemptIndex
+
+  useEffect(() => {
+    setSelectedAttemptIndex(0)
+  }, [selected?.id])
+
+  useLayoutEffect(() => {
+    if (!selected) {
+      hotkeyHandlersRef.current = null
+      return
+    }
+    lineIdRef.current = selected.id
+    const queueIds = reviewQueueIds
+    const thr = alignmentConfidenceThreshold
+    const busySession = alignmentSessionBusy
+
+    hotkeyHandlersRef.current = {
+      goNextReview: () => {
+        const sid = useSubtitleStore.getState().currentSubtitleId
+        const nextId = advanceReviewQueueId(queueIds, sid ?? null, 1)
+        if (nextId != null) useSubtitleStore.getState().selectSubtitle(nextId)
+      },
+      goPrevReview: () => {
+        const sid = useSubtitleStore.getState().currentSubtitleId
+        const prevId = advanceReviewQueueId(queueIds, sid ?? null, -1)
+        if (prevId != null) useSubtitleStore.getState().selectSubtitle(prevId)
+      },
+      stepAttempt: (dir) => {
+        setSelectedAttemptIndex((prev) => {
+          const lid = lineIdRef.current
+          if (lid == null) return prev
+          const cur = useSubtitleStore.getState().subtitles.find((l) => l.id === lid)
+          const sorted = [...(cur?.aiAttempts ?? [])].sort((a, b) => b.createdAt - a.createdAt)
+          if (sorted.length === 0) return 0
+          const max = sorted.length - 1
+          return Math.min(max, Math.max(0, prev + dir))
+        })
+      },
+      applySelectedAttempt: () => {
+        const lid = lineIdRef.current
+        if (lid == null) return
+        const cur = useSubtitleStore.getState().subtitles.find((l) => l.id === lid)
+        if (!cur) return
+        const sorted = [...(cur.aiAttempts ?? [])].sort((a, b) => b.createdAt - a.createdAt)
+        if (sorted.length === 0) return
+        const idx = Math.min(Math.max(0, selectedAttemptIndexRef.current), sorted.length - 1)
+        const att = sorted[idx]
+        if (att?.english.trim()) {
+          useSubtitleStore.getState().applySubtitleAiAttempt(lid, att.id, thr)
+        }
+      },
+      retryLine: (wide) => {
+        const br = useBatchRetrySessionStore.getState().status
+        if (br === 'running' || br === 'paused') return
+        if (lineRetryBusy !== 'idle' || busySession) return
+        const lid = lineIdRef.current
+        if (lid == null) return
+        setLineRetryBusy(wide ? 'wide' : 'narrow')
+        void (async () => {
+          try {
+            const st = useSubtitleStore.getState()
+            const fresh = st.subtitles.find((l) => l.id === lid)
+            if (!fresh) return
+            await runSingleSubtitleAlignmentRetry({
+              line: fresh,
+              subtitles: st.subtitles,
+              segments: useScriptPoolStore.getState().segments,
+              model: alignmentModel,
+              confidenceThresholdPct: thr,
+              wide
+            })
+          } finally {
+            setLineRetryBusy('idle')
+          }
+        })()
+      },
+      markConfirmed: () => {
+        const lid = lineIdRef.current
+        if (lid == null) return
+        const cur = useSubtitleStore.getState().subtitles.find((l) => l.id === lid)
+        if (!cur?.english.trim()) return
+        useSubtitleStore.getState().updateSubtitle(lid, { status: 'confirmed' })
+      },
+      focusEnglish: () => {
+        englishEditorRef.current?.focus()
+      }
+    }
+  }, [
+    selected,
+    reviewQueueIds,
+    alignmentConfidenceThreshold,
+    alignmentModel,
+    alignmentSessionBusy,
+    lineRetryBusy
+  ])
+
+  useAlignmentReviewHotkeys(Boolean(selected), hotkeyHandlersRef)
+
   if (!selected) {
     return (
       <section className="app-panel app-panel--primary flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
@@ -574,6 +724,7 @@ function AlignmentWorkspace({
   }
 
   const line = selected
+  const lineInQueue = isInAlignmentReviewQueue(line, { confidenceThresholdPct: alignmentConfidenceThreshold })
   const meta = statusMeta[line.status]
 
   function applyCandidate(candidateId: string): void {
@@ -596,233 +747,222 @@ function AlignmentWorkspace({
           </div>
           <span className={meta.badgeClass}>{meta.label}</span>
         </div>
+        <p className="workspace-phase-strip type-caption mt-2 rounded-md px-2 py-1.5 leading-snug">
+          <span className="workspace-phase-strip__lead font-medium">Phase 4B · Review & Attempts</span>
+          {' · '}
+          快捷键 K/J 队列 · A/D 尝试 · Enter 应用 · R / Shift+R 重试 · M 确认 · E 聚焦英文
+          {' · '}
+          全文件队列 {reviewQueue.length} 条（按风险分排序，仅导航）
+          {queuePosition ? (
+            <>
+              {' · '}
+              当前排位 <span className="tabular-nums">{queuePosition.index}/{queuePosition.total}</span>
+            </>
+          ) : (
+            <> · 当前行不在复查队列</>
+          )}
+          {lineInQueue && currentRisk ? (
+            <>
+              {' · '}
+              风险 <span className="tabular-nums">{currentRisk.score}</span>（
+              {currentRisk.band === 'high' ? '高' : currentRisk.band === 'elevated' ? '中' : '低'}）
+              {currentRisk.hints.length > 0 ? ` · ${currentRisk.hints.join('；')}` : ''}
+            </>
+          ) : null}
+        </p>
       </div>
 
-      <div className="workspace-body grid min-h-0 flex-1 gap-4 overflow-y-auto p-4">
-        <label className="block">
-          <span className="type-field-label mb-1.5 block">Chinese Subtitle</span>
-          <textarea
-            key={`zh-${line.id}`}
-            className="subtitle-editor subtitle-editor--dense"
-            data-subtitle-id={line.id}
-            value={line.chinese}
-            onFocus={() => {
-              chineseEditStartRef.current = { subtitleId: line.id, text: line.chinese }
-            }}
-            onBlur={(event) => {
-              const fieldLineId = Number(event.currentTarget.dataset.subtitleId)
-              const start = chineseEditStartRef.current
-              if (!start || start.subtitleId !== fieldLineId) return
-              chineseEditStartRef.current = null
-              const after = event.currentTarget.value
-              if (start.text !== after) {
-                useHistoryStore.getState().recordTextEditIfChanged({
-                  subtitleId: start.subtitleId,
-                  field: 'chinese',
-                  before: start.text,
-                  after
-                })
-              }
-            }}
-            onChange={(event) =>
-              updateSubtitle(line.id, {
-                chinese: event.currentTarget.value,
-                manuallyEdited: true,
-                status: 'manual'
-              })
-            }
-          />
-        </label>
-
-        <label className="block">
-          <span className="type-field-label mb-1.5 block">English Subtitle</span>
-          <textarea
-            key={`en-${line.id}`}
-            className="subtitle-editor subtitle-editor--dense"
-            data-subtitle-id={line.id}
-            value={line.english}
-            onFocus={() => {
-              englishEditStartRef.current = { subtitleId: line.id, text: line.english }
-            }}
-            onBlur={(event) => {
-              const fieldLineId = Number(event.currentTarget.dataset.subtitleId)
-              const start = englishEditStartRef.current
-              if (!start || start.subtitleId !== fieldLineId) return
-              englishEditStartRef.current = null
-              const after = event.currentTarget.value
-              if (start.text !== after) {
-                useHistoryStore.getState().recordTextEditIfChanged({
-                  subtitleId: start.subtitleId,
-                  field: 'english',
-                  before: start.text,
-                  after
-                })
-              }
-            }}
-            onChange={(event) =>
-              updateSubtitle(line.id, {
-                english: event.currentTarget.value,
-                manuallyEdited: true,
-                status: 'manual',
-                matchedSegmentIds: []
-              })
-            }
-          />
-        </label>
-
-        <div className="candidate-well">
-          <div className="candidate-well__head mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-            <div>
-              <h2 className="type-panel-title">AI Candidate Matches</h2>
-              <p className="type-caption mt-0.5">Line confidence {line.confidence}%</p>
-            </div>
-            <div className="confidence-track confidence-track--compact w-24">
-              <div className="confidence-fill" style={{ width: `${line.confidence}%` }} />
-            </div>
-          </div>
-
-          <div className="candidate-stack">
-            {line.candidates.map((candidate) => {
-              const isActive =
-                candidate.text === line.english &&
-                segmentIdsEqual(candidate.segmentIds, line.matchedSegmentIds ?? [])
-
-              return (
-                <button
-                  key={candidate.id}
-                  type="button"
-                  className={`candidate-card${isActive ? ' candidate-card--selected' : ''}`}
-                  onClick={() => applyCandidate(candidate.id)}
-                >
-                  <div className="candidate-card__top-row flex w-full flex-wrap items-start justify-between gap-2">
-                    <span className="candidate-score">{candidate.confidence}%</span>
-                    <span className="candidate-seg-count tabular-nums">
-                      {candidate.segmentIds.length} segment{candidate.segmentIds.length === 1 ? '' : 's'}
-                    </span>
-                  </div>
-                  <span className="type-candidate-text mt-1.5 min-w-0 flex-1 text-left">{candidate.text}</span>
-                </button>
-              )
-            })}
-          </div>
-        </div>
-
-        <section className="rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] p-3">
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="type-panel-title">复查队列 · AI 尝试</h2>
-            <span className="type-caption text-meta">{line.aiAttempts?.length ?? 0} 条</span>
-          </div>
-          <div className="mb-3 flex flex-wrap gap-2">
-            <button type="button" className="toolbar-btn toolbar-btn--panel text-[12px]" onClick={() => goNextReview()}>
-              下一条待复查
-            </button>
-            <button
-              type="button"
-              className="toolbar-btn toolbar-btn--panel text-[12px]"
-              disabled={lineRetryBusy !== 'idle' || alignmentSessionBusy}
-              onClick={() => void runLineRetry(false)}
-            >
-              {lineRetryBusy === 'narrow' ? '重试中…' : '重试本行'}
-            </button>
-            <button
-              type="button"
-              className="toolbar-btn toolbar-btn--panel text-[12px]"
-              disabled={lineRetryBusy !== 'idle' || alignmentSessionBusy}
-              onClick={() => void runLineRetry(true)}
-            >
-              {lineRetryBusy === 'wide' ? '扩窗重试中…' : '扩窗重试'}
-            </button>
-            <button
-              type="button"
-              className="toolbar-btn toolbar-btn--panel text-[12px]"
-              disabled={!suggested}
-              onClick={() => {
-                if (!suggested) return
-                applyAiAttempt(line.id, suggested.id, alignmentConfidenceThreshold)
+      <div
+        className="workspace-body flex min-h-0 flex-1 flex-col overflow-hidden p-4"
+        data-alignment-review-surface="true"
+      >
+        <VerticalStackSplitter
+          defaultTopRatio={0.52}
+          top={
+            <div className="flex min-h-0 min-w-0 flex-col gap-4 overflow-y-auto pr-1">
+          <label className="block">
+            <span className="type-field-label mb-1.5 block">Chinese Subtitle</span>
+            <textarea
+              key={`zh-${line.id}`}
+              className="subtitle-editor subtitle-editor--dense"
+              data-subtitle-id={line.id}
+              value={line.chinese}
+              onFocus={() => {
+                chineseEditStartRef.current = { subtitleId: line.id, text: line.chinese }
               }}
-            >
-              应用推荐尝试
-            </button>
-            <button
-              type="button"
-              className="toolbar-btn toolbar-btn--panel text-[12px]"
-              disabled={!line.english.trim()}
-              onClick={() => updateSubtitle(line.id, { status: 'confirmed' })}
-            >
-              标记已确认
-            </button>
-          </div>
-          <p className="type-caption mb-1 text-meta">当前应用（confidence {line.confidence}%）</p>
-          <p className="type-caption mb-3 line-clamp-3 text-secondary" title={line.english}>
-            {line.english.trim() ? line.english : '（空）'}
-          </p>
-          <ul className="max-h-60 space-y-2 overflow-y-auto pr-0.5">
-            {[...(line.aiAttempts ?? [])]
-              .sort((a, b) => b.createdAt - a.createdAt)
-              .map((att) => {
-                const isPick = suggested?.id === att.id
-                const isDup = dupIds.get(att.id)
+              onBlur={(event) => {
+                const fieldLineId = Number(event.currentTarget.dataset.subtitleId)
+                const start = chineseEditStartRef.current
+                if (!start || start.subtitleId !== fieldLineId) return
+                chineseEditStartRef.current = null
+                const after = event.currentTarget.value
+                if (start.text !== after) {
+                  useHistoryStore.getState().recordTextEditIfChanged({
+                    subtitleId: start.subtitleId,
+                    field: 'chinese',
+                    before: start.text,
+                    after
+                  })
+                }
+              }}
+              onChange={(event) =>
+                updateSubtitle(line.id, {
+                  chinese: event.currentTarget.value,
+                  manuallyEdited: true,
+                  status: 'manual'
+                })
+              }
+            />
+          </label>
+
+          <label className="block">
+            <span className="type-field-label mb-1.5 block">English Subtitle</span>
+            <textarea
+              ref={englishEditorRef}
+              key={`en-${line.id}`}
+              className="subtitle-editor subtitle-editor--dense"
+              data-subtitle-id={line.id}
+              value={line.english}
+              onFocus={() => {
+                englishEditStartRef.current = { subtitleId: line.id, text: line.english }
+              }}
+              onBlur={(event) => {
+                const fieldLineId = Number(event.currentTarget.dataset.subtitleId)
+                const start = englishEditStartRef.current
+                if (!start || start.subtitleId !== fieldLineId) return
+                englishEditStartRef.current = null
+                const after = event.currentTarget.value
+                if (start.text !== after) {
+                  useHistoryStore.getState().recordTextEditIfChanged({
+                    subtitleId: start.subtitleId,
+                    field: 'english',
+                    before: start.text,
+                    after
+                  })
+                }
+              }}
+              onChange={(event) =>
+                updateSubtitle(line.id, {
+                  english: event.currentTarget.value,
+                  manuallyEdited: true,
+                  status: 'manual',
+                  matchedSegmentIds: []
+                })
+              }
+            />
+          </label>
+
+          <div className="candidate-well">
+            <div className="candidate-well__head mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+              <div>
+                <h2 className="type-panel-title">AI Candidate Matches</h2>
+                <p className="type-caption mt-0.5">Line confidence {line.confidence}%</p>
+              </div>
+              <div className="confidence-track confidence-track--compact w-24">
+                <div className="confidence-fill" style={{ width: `${line.confidence}%` }} />
+              </div>
+            </div>
+
+            <div className="candidate-stack">
+              {line.candidates.map((candidate) => {
+                const isActive =
+                  candidate.text === line.english &&
+                  segmentIdsEqual(candidate.segmentIds, line.matchedSegmentIds ?? [])
+
                 return (
-                  <li
-                    key={att.id}
-                    className={`rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] p-2 text-[12px] leading-snug ${
-                      isPick ? 'ring-1 ring-amber-500/50' : ''
-                    }`}
+                  <button
+                    key={candidate.id}
+                    type="button"
+                    className={`candidate-card${isActive ? ' candidate-card--selected' : ''}`}
+                    onClick={() => applyCandidate(candidate.id)}
                   >
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div className="min-w-0 flex-1 space-y-1">
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-meta">
-                          <span className="font-mono tabular-nums">{new Date(att.createdAt).toLocaleString()}</span>
-                          <span>{att.source}</span>
-                          {att.contextTier != null ? <span>tier {att.contextTier}</span> : null}
-                          <span>{att.confidence}%</span>
-                          {isPick ? <span className="text-amber-800 dark:text-amber-200">推荐</span> : null}
-                          {isDup ? <span className="text-secondary">duplicate</span> : null}
-                        </div>
-                        {att.problems.length > 0 ? (
-                          <ul className="list-inside list-disc text-[11px] text-secondary">
-                            {att.problems.slice(0, 6).map((p, i) => (
-                              <li key={i}>{p}</li>
-                            ))}
-                          </ul>
-                        ) : null}
-                        <p className="whitespace-pre-wrap break-words text-primary">
-                          {att.english.trim() ? att.english : '（空 / 失败摘要）'}
-                        </p>
-                      </div>
-                      <div className="flex shrink-0 flex-col gap-1">
-                        <button
-                          type="button"
-                          className="toolbar-btn toolbar-btn--panel px-2 py-1 text-[11px]"
-                          disabled={!att.english.trim()}
-                          onClick={() => applyAiAttempt(line.id, att.id, alignmentConfidenceThreshold)}
-                        >
-                          应用
-                        </button>
-                        <button
-                          type="button"
-                          className="toolbar-btn toolbar-btn--panel px-2 py-1 text-[11px]"
-                          onClick={() => void navigator.clipboard?.writeText(att.english)}
-                        >
-                          复制
-                        </button>
-                        <button
-                          type="button"
-                          className="toolbar-btn toolbar-btn--panel px-2 py-1 text-[11px]"
-                          onClick={() => removeAiAttempt(line.id, att.id)}
-                        >
-                          删除
-                        </button>
-                      </div>
+                    <div className="candidate-card__top-row flex w-full flex-wrap items-start justify-between gap-2">
+                      <span className="candidate-score">{candidate.confidence}%</span>
+                      <span className="candidate-seg-count tabular-nums">
+                        {candidate.segmentIds.length} segment{candidate.segmentIds.length === 1 ? '' : 's'}
+                      </span>
                     </div>
-                  </li>
+                    <span className="type-candidate-text mt-1.5 min-w-0 flex-1 text-left">{candidate.text}</span>
+                  </button>
                 )
               })}
-          </ul>
-          {(line.aiAttempts?.length ?? 0) === 0 ? (
-            <p className="type-caption mt-2 text-meta">尚无尝试记录；整文件对齐或单行重试后会出现在此。</p>
-          ) : null}
-        </section>
+            </div>
+          </div>
+
+          <section className="rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] p-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="type-panel-title">复查队列与重试</h2>
+              <span className="type-caption text-meta">{line.aiAttempts?.length ?? 0} 条尝试</span>
+            </div>
+            <div className="mb-3 flex flex-wrap gap-2" data-review-hotkeys="true">
+              <button
+                type="button"
+                className="toolbar-btn toolbar-btn--panel text-[12px]"
+                disabled={reviewQueue.length === 0}
+                onClick={() => goPrevReview()}
+              >
+                上一条（队列）
+              </button>
+              <button
+                type="button"
+                className="toolbar-btn toolbar-btn--panel text-[12px]"
+                disabled={reviewQueue.length === 0}
+                onClick={() => goNextReview()}
+              >
+                下一条（队列）
+              </button>
+              <button
+                type="button"
+                className="toolbar-btn toolbar-btn--panel text-[12px]"
+                disabled={!suggested}
+                onClick={() => {
+                  if (!suggested) return
+                  applyAiAttempt(line.id, suggested.id, alignmentConfidenceThreshold)
+                }}
+              >
+                应用推荐尝试
+              </button>
+              <button
+                type="button"
+                className="toolbar-btn toolbar-btn--panel text-[12px]"
+                disabled={!line.english.trim()}
+                onClick={() => updateSubtitle(line.id, { status: 'confirmed' })}
+              >
+                标记已确认
+              </button>
+            </div>
+            <p className="type-caption mb-1 text-meta">当前应用（confidence {line.confidence}%）</p>
+            <p className="type-caption line-clamp-3 text-secondary" title={line.english}>
+              {line.english.trim() ? line.english : '（空）'}
+            </p>
+          </section>
+            </div>
+          }
+          bottom={
+            <div className="flex min-h-0 min-w-0 flex-col overflow-hidden pt-1">
+              <div className="mx-auto flex min-h-0 w-full max-w-4xl flex-col overflow-hidden lg:max-w-none">
+                <AlignmentAttemptsColumn
+                  line={line}
+                  subtitles={subtitles}
+                  segments={segments}
+                  alignmentModel={alignmentModel}
+                  alignmentConfidenceThreshold={alignmentConfidenceThreshold}
+                  suggested={suggested}
+                  dupIds={dupIds}
+                  selectedAttemptIndex={selectedAttemptIndex}
+                  onSelectedAttemptIndexChange={setSelectedAttemptIndex}
+                  applyAiAttempt={applyAiAttempt}
+                  removeAiAttempt={removeAiAttempt}
+                  setPreferredAttempt={setPreferredSubtitleAttempt}
+                  lineRetryBusy={lineRetryBusy}
+                  alignmentSessionBusy={alignmentSessionBusy}
+                  onRetryNarrow={() => void runLineRetry(false)}
+                  onRetryWide={() => void runLineRetry(true)}
+                />
+              </div>
+            </div>
+          }
+        />
       </div>
     </section>
   )

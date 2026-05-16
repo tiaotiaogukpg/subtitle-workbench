@@ -1,5 +1,5 @@
 import { useSubtitleStore } from '../../store/subtitleStore'
-import type { ScriptSegment, SubtitleAiAttempt, SubtitleLine } from '../../types'
+import type { ScriptSegment, SubtitleAiAttempt, SubtitleAiAttemptSource, SubtitleLine } from '../../types'
 import {
   buildAiAttemptPayloadFromWritableRow,
   buildFailedAiAttemptPayload
@@ -19,6 +19,8 @@ export interface RunSingleSubtitleAlignmentRetryInput {
   confidenceThresholdPct: number
   /** false：与整文件首轮相同 tier 序列；true：与 Retry Coverage 相同的大窗 + prompt。 */
   wide: boolean
+  /** 覆盖默认 single_retry / wide_retry，用于 batch 等来源标签。 */
+  attemptSource?: SubtitleAiAttemptSource
 }
 
 export type RunSingleSubtitleAlignmentRetryResult =
@@ -31,8 +33,9 @@ export type RunSingleSubtitleAlignmentRetryResult =
 export async function runSingleSubtitleAlignmentRetry(
   input: RunSingleSubtitleAlignmentRetryInput
 ): Promise<RunSingleSubtitleAlignmentRetryResult> {
-  const { line, subtitles, segments, model, confidenceThresholdPct, wide } = input
-  const source = wide ? ('wide_retry' as const) : ('single_retry' as const)
+  const { line, subtitles, segments, model, confidenceThresholdPct, wide, attemptSource: sourceOverride } = input
+  const source: SubtitleAiAttemptSource =
+    sourceOverride ?? (wide ? ('wide_retry' as const) : ('single_retry' as const))
 
   const result = await runAlignmentBatchWithTimeRatioTiers({
     batch: [line],

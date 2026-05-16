@@ -49,6 +49,8 @@ export interface SubtitleStoreActions {
   removeSubtitleAiAttempt: (subtitleId: number, attemptId: string) => void
   /** 将某条尝试应用为当前 `english` 与状态。 */
   applySubtitleAiAttempt: (subtitleId: number, attemptId: string, confidenceThresholdPct: number) => void
+  /** 标记偏好 AI 尝试（再次点击同一 id 则取消）。不触发自动应用。 */
+  setPreferredSubtitleAttempt: (subtitleId: number, attemptId: string | null) => void
   /** 整文件对齐：写入 AI 英文 + 状态 + 可读 problems + 候选（含 source），并追加 `aiAttempts`。 */
   applyFullFileAIMatchBatch: (entries: AiMatchBatchEntry[], confidenceThresholdPct: number) => void
   /** Retry Coverage Pass：仅更新非 confirmed/manual 行，并追加 `aiAttempts`。 */
@@ -168,11 +170,25 @@ export const useSubtitleStore = create<SubtitleStore>((set, get) => ({
 
   removeSubtitleAiAttempt: (subtitleId, attemptId) =>
     set((s) => ({
-      subtitles: s.subtitles.map((line) =>
-        line.id !== subtitleId
-          ? line
-          : { ...line, aiAttempts: line.aiAttempts?.filter((a) => a.id !== attemptId) }
-      )
+      subtitles: s.subtitles.map((line) => {
+        if (line.id !== subtitleId) return line
+        if (line.status === 'manual') return line
+        if (line.preferredAttemptId === attemptId) return line
+        const nextAttempts = line.aiAttempts?.filter((a) => a.id !== attemptId)
+        const nextPreferred =
+          line.preferredAttemptId === attemptId ? undefined : line.preferredAttemptId
+        return { ...line, aiAttempts: nextAttempts, preferredAttemptId: nextPreferred }
+      })
+    })),
+
+  setPreferredSubtitleAttempt: (subtitleId, attemptId) =>
+    set((s) => ({
+      subtitles: s.subtitles.map((line) => {
+        if (line.id !== subtitleId) return line
+        const next =
+          attemptId == null || line.preferredAttemptId === attemptId ? undefined : attemptId
+        return { ...line, preferredAttemptId: next }
+      })
     })),
 
   applySubtitleAiAttempt: (subtitleId, attemptId, confidenceThresholdPct) => {

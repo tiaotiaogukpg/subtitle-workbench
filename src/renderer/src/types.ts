@@ -1,7 +1,13 @@
 export type SubtitleStatus = 'confirmed' | 'low_confidence' | 'manual' | 'unmatched' | 'needs_review'
 
 /** 单行/整批 AI 对齐的一次尝试记录（`english` 为已应用结果时仍保留历史）。 */
-export type SubtitleAiAttemptSource = 'initial' | 'retry' | 'single_retry' | 'wide_retry'
+export type SubtitleAiAttemptSource =
+  | 'initial'
+  | 'retry'
+  | 'single_retry'
+  | 'wide_retry'
+  | 'batch_retry'
+  | 'batch_wide_retry'
 
 export interface SubtitleAiAttempt {
   id: string
@@ -62,7 +68,9 @@ export interface SubtitleLine {
   manuallyEdited: boolean
   /** 当前行英文对齐所绑定的 Script Pool 片段 id（预留 / 与候选一致）。 */
   matchedSegmentIds: string[]
-  /** 历史 AI 尝试（首轮、Coverage、单行重试等）；当前 `english` 仍为已应用结果。 */
+  /** 用户标记的偏好尝试 id（仅 UI / 防误删；不自动应用）。 */
+  preferredAttemptId?: string
+  /** 该行历次 AI 对齐尝试（仅追加；应用某条由用户显式触发）。 */
   aiAttempts?: SubtitleAiAttempt[]
 }
 
