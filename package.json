@@ -24,7 +24,9 @@
       "package.json"
     ],
     "asar": true,
+    "electronDist": "node_modules/electron/dist",
     "win": {
+      "signAndEditExecutable": false,
       "target": [
         {
           "target": "nsis",
