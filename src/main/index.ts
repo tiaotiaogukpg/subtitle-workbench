@@ -58,12 +58,18 @@ function createWindow(): void {
     title: 'Bilingual Subtitle Aligner',
     backgroundColor: '#111827',
     autoHideMenuBar: true,
+    show: false,
     webPreferences: {
       preload: resolvePreloadPath(),
       sandbox: false,
       contextIsolation: true,
       nodeIntegration: false
     }
+  })
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.maximize()
+    mainWindow.show()
   })
 
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {

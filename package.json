@@ -2,6 +2,7 @@
   "name": "bilingual-subtitle-aligner",
   "version": "0.1.0",
   "description": "AI-assisted bilingual subtitle alignment desktop app.",
+  "license": "GPL-3.0",
   "main": "out/main/index.js",
   "type": "module",
   "private": true,

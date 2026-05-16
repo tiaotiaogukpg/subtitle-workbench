@@ -10,7 +10,9 @@ out/
 dist/
 build/
 release/
+release-build/
 release2/
+release.old.*/
 
 # ---------------------------------------------------------------------------
 # Logs & diagnostics
