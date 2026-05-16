@@ -29,8 +29,19 @@ import { useScriptPoolStore } from '../../store/scriptPoolStore'
 import { useSubtitleStore } from '../../store/subtitleStore'
 import { useUiSettingsStore } from '../../store/uiSettingsStore'
 import type { AiAlignmentRunConfig, SubtitleLine, SubtitleStatus } from '../../types'
-
-let runGeneration = 0
+import {
+  canStartAiOperation,
+  cancelAiOperation,
+  failAiOperation,
+  finishAiOperation,
+  getActiveAiOperation,
+  humanizeAiOperationError,
+  isActiveRun,
+  pauseAiOperation,
+  releaseAiOperationAfterStop,
+  resumeAiOperation,
+  startAiOperation
+} from './operationGuard'
 
 function countBatchStats(
   batchSubtitleIds: number[],
@@ -224,9 +235,15 @@ function applyRetryCoverageBatchResults(
   return aiEntries.length
 }
 
+function mayWriteAlignmentResults(operationId: number): boolean {
+  if (!isActiveRun(operationId)) return false
+  const st = useAlignmentSessionStore.getState().status
+  return st === 'running' || st === 'paused'
+}
+
 async function runFullFileAlignment(
   config: AiAlignmentRunConfig,
-  generation: number,
+  operationId: number,
   resume?: {
     subtitleStart: number
     batchIndexBeforeIncrement: number
@@ -242,7 +259,7 @@ async function runFullFileAlignment(
   let batchIndex = resume?.batchIndexBeforeIncrement ?? 0
 
   while (subtitleStart < subtitles.length) {
-    if (generation !== runGeneration) return
+    if (!isActiveRun(operationId)) return
     const sessionNow = useAlignmentSessionStore.getState()
     if (sessionNow.status === 'paused') {
       await new Promise((r) => setTimeout(r, 200))
@@ -276,11 +293,13 @@ async function runFullFileAlignment(
       confidenceThresholdPct: config.confidenceThreshold
     })
 
-    if (generation !== runGeneration) return
+    if (!mayWriteAlignmentResults(operationId)) return
 
     if (!result.ok) {
-      useAlignmentPreviewStore.getState().setRunError(result.error, result.debug)
-      session.failSession(result.error)
+      const msg = humanizeAiOperationError(result.error)
+      useAlignmentPreviewStore.getState().setRunError(msg, result.debug)
+      session.failSession(msg)
+      failAiOperation(operationId, result.error)
       return
     }
 
@@ -318,7 +337,7 @@ async function runFullFileAlignment(
     subtitleStart += batch.length
   }
 
-  if (generation !== runGeneration) return
+  if (!isActiveRun(operationId)) return
 
   const subtitlesAfterFirst = useSubtitleStore.getState().subtitles
   const firstPassMatchedCount = subtitlesAfterFirst.filter(
@@ -345,11 +364,11 @@ async function runFullFileAlignment(
 
     const batchSize = config.batchSize
     for (let batchStart = 0, rb = 0; batchStart < initialRetryTargets.length; batchStart += batchSize) {
-      if (generation !== runGeneration) return
+      if (!isActiveRun(operationId)) return
       let sessionLoop = useAlignmentSessionStore.getState()
       while (sessionLoop.status === 'paused') {
         await new Promise((r) => setTimeout(r, 200))
-        if (generation !== runGeneration) return
+        if (!isActiveRun(operationId)) return
         sessionLoop = useAlignmentSessionStore.getState()
       }
       if (sessionLoop.status !== 'running') return
@@ -388,11 +407,13 @@ async function runFullFileAlignment(
         confidenceThresholdPct: config.confidenceThreshold
       })
 
-      if (generation !== runGeneration) return
+      if (!mayWriteAlignmentResults(operationId)) return
 
       if (!result.ok) {
-        useAlignmentPreviewStore.getState().setRunError(result.error, result.debug)
-        useAlignmentSessionStore.getState().failSession(result.error)
+        const msg = humanizeAiOperationError(result.error)
+        useAlignmentPreviewStore.getState().setRunError(msg, result.debug)
+        useAlignmentSessionStore.getState().failSession(msg)
+        failAiOperation(operationId, result.error)
         return
       }
 
@@ -435,7 +456,7 @@ async function runFullFileAlignment(
     })
   }
 
-  if (generation !== runGeneration) return
+  if (!isActiveRun(operationId)) return
 
   const finalReport = buildFullFileAlignmentReport({
     subtitles: useSubtitleStore.getState().subtitles,
@@ -459,38 +480,62 @@ export function startAlignmentSession(config: AiAlignmentRunConfig, apiKey: stri
   })
   if (blocked) return blocked
 
-  const status = useAlignmentSessionStore.getState().status
-  if (status === 'running' || status === 'paused') {
-    return '已有对齐任务正在运行。'
-  }
+  const gate = canStartAiOperation()
+  if (!gate.ok) return gate.reason
 
   const subtitles = useSubtitleStore.getState().subtitles
   const totalBatches = Math.max(1, Math.ceil(subtitles.length / config.batchSize))
 
-  runGeneration += 1
-  const generation = runGeneration
+  const started = startAiOperation('full_file_alignment', { totalCount: subtitles.length })
+  if (!started.ok) return started.reason
+  const operationId = started.operationId
 
   useAlignmentSessionStore.getState().beginSession(config, subtitles.length, totalBatches)
   useAlignmentPreviewStore.getState().startLoading()
 
   void (async () => {
     try {
-      await runFullFileAlignment(config, generation)
+      await runFullFileAlignment(config, operationId)
+      if (isActiveRun(operationId)) {
+        finishAiOperation(operationId)
+      } else {
+        releaseAiOperationAfterStop(operationId)
+        useAlignmentPreviewStore.getState().clearRunLoading()
+      }
     } catch (e) {
-      if (generation !== runGeneration) return
-      const msg = e instanceof Error ? e.message : String(e)
+      if (!isActiveRun(operationId)) {
+        releaseAiOperationAfterStop(operationId)
+        useAlignmentPreviewStore.getState().clearRunLoading()
+        return
+      }
+      const msg = humanizeAiOperationError(e instanceof Error ? e.message : String(e))
       useAlignmentPreviewStore.getState().setRunError(msg, null)
       useAlignmentSessionStore.getState().failSession(msg)
+      failAiOperation(operationId, msg)
     }
   })()
 
   return null
 }
 
+export function stopAlignmentSession(): void {
+  const op = getActiveAiOperation()
+  if (op?.operationType === 'full_file_alignment') {
+    cancelAiOperation(op.operationId)
+    releaseAiOperationAfterStop(op.operationId)
+  }
+  useAlignmentSessionStore.getState().stopSessionAsUserCancelled()
+  useAlignmentPreviewStore.getState().clearRunLoading()
+}
+
 export function pauseAlignmentSession(): void {
+  const op = getActiveAiOperation()
+  if (op?.operationType === 'full_file_alignment') pauseAiOperation(op.operationId)
   useAlignmentSessionStore.getState().setPaused()
 }
 
 export function resumeAlignmentSession(): void {
+  const op = getActiveAiOperation()
+  if (op?.operationType === 'full_file_alignment') resumeAiOperation(op.operationId)
   useAlignmentSessionStore.getState().setResumed()
 }

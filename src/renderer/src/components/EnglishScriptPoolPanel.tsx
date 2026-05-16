@@ -48,7 +48,7 @@ export function EnglishScriptPoolPanel(): JSX.Element {
       <div className="app-panel-header script-pool-panel__head shrink-0 px-3 py-2">
         <h2 className="ui-section-title">英文原稿</h2>
         <p className="type-caption script-pool-panel__caption mt-0.5">
-          Script pool · {segments.length} 条
+          共 {segments.length} 条
           {listFilter !== 'all' ? ` · 显示 ${visible.length}` : ''}
         </p>
         <div className="script-pool-filter mt-2 flex flex-wrap gap-1.5" role="toolbar" aria-label="脚本池筛选">

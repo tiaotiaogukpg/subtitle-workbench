@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ScriptSegment } from '../../types'
-import { buildDebugCandidateGroups, normalizeGroupText } from './candidateGroups'
+import { buildDebugCandidateGroups } from './candidateGroups'
+import { normalizeGroupText } from './textUtils'
 
 function en(id: string, text: string): ScriptSegment {
   return {

@@ -216,6 +216,29 @@
   --color-script-pool-scrollbar-track: rgba(255, 255, 255, 0.04);
   --color-script-pool-scrollbar-thumb: rgba(255, 255, 255, 0.18);
   --color-script-pool-scrollbar-thumb-hover: rgba(255, 255, 255, 0.28);
+
+  /* Phase 4B · Review & Attempts */
+  --color-phase4b-panel-bg: var(--color-list-item-bg);
+  --color-phase4b-card-bg: var(--color-script-pool-card-bg);
+  --color-phase4b-card-hover-bg: var(--color-script-pool-card-hover-bg);
+  --color-phase4b-card-selected-bg: var(--color-script-pool-card-selected-bg);
+  --color-phase4b-inset-bg: rgba(0, 0, 0, 0.28);
+  --color-phase4b-btn-bg: rgba(255, 255, 255, 0.06);
+  --color-phase4b-btn-hover-bg: rgba(255, 255, 255, 0.12);
+  --color-phase4b-wide-border: rgba(251, 191, 36, 0.4);
+  --color-phase4b-wide-bg: rgba(251, 191, 36, 0.09);
+  --color-phase4b-wide-text: rgba(254, 243, 199, 0.94);
+  --color-phase4b-hint-bg: rgba(251, 191, 36, 0.07);
+  --color-phase4b-hint-border: rgba(251, 191, 36, 0.24);
+  --color-phase4b-hint-title: rgba(253, 224, 71, 0.92);
+  --color-task-banner-bg: rgba(94, 176, 232, 0.1);
+  --color-task-banner-border: rgba(94, 176, 232, 0.28);
+  --color-task-banner-text: rgba(224, 242, 254, 0.95);
+
+  --color-modal-close-bg: var(--color-bg-panel);
+  --color-modal-close-fg: rgba(255, 255, 255, 0.9);
+  --color-modal-close-hover-bg: #dc2626;
+  --color-modal-close-hover-fg: #ffffff;
 }
 
 [data-theme='light'] {
@@ -417,4 +440,26 @@
   --color-script-pool-scrollbar-track: rgba(15, 23, 42, 0.06);
   --color-script-pool-scrollbar-thumb: rgba(15, 23, 42, 0.22);
   --color-script-pool-scrollbar-thumb-hover: rgba(15, 23, 42, 0.32);
+
+  --color-phase4b-panel-bg: var(--color-bg-elevated);
+  --color-phase4b-card-bg: #ffffff;
+  --color-phase4b-card-hover-bg: #f1f5f9;
+  --color-phase4b-card-selected-bg: rgba(2, 132, 199, 0.1);
+  --color-phase4b-inset-bg: rgba(15, 23, 42, 0.04);
+  --color-phase4b-btn-bg: rgba(15, 23, 42, 0.06);
+  --color-phase4b-btn-hover-bg: rgba(15, 23, 42, 0.1);
+  --color-phase4b-wide-border: rgba(217, 119, 6, 0.45);
+  --color-phase4b-wide-bg: rgba(251, 191, 36, 0.12);
+  --color-phase4b-wide-text: #92400e;
+  --color-phase4b-hint-bg: rgba(251, 191, 36, 0.1);
+  --color-phase4b-hint-border: rgba(217, 119, 6, 0.28);
+  --color-phase4b-hint-title: #b45309;
+  --color-task-banner-bg: rgba(2, 132, 199, 0.08);
+  --color-task-banner-border: rgba(2, 132, 199, 0.22);
+  --color-task-banner-text: #0c4a6e;
+
+  --color-modal-close-bg: var(--color-bg-panel);
+  --color-modal-close-fg: var(--color-text-secondary);
+  --color-modal-close-hover-bg: #dc2626;
+  --color-modal-close-hover-fg: #ffffff;
 }

@@ -1,5 +1,6 @@
 import { useMemo, useState, type JSX } from 'react'
-import { pauseAlignmentSession, resumeAlignmentSession, suggestTrimOverlappingAdjacentSpans } from '../lib/alignment'
+import { suggestTrimOverlappingAdjacentSpans } from '../lib/alignment'
+import { AlignmentSessionControls } from './alignment/AlignmentSessionControls'
 import { useAlignmentPreviewStore } from '../store/alignmentPreviewStore'
 import { useAlignmentSessionStore } from '../store/alignmentSessionStore'
 import { useSubtitleStore } from '../store/subtitleStore'
@@ -84,6 +85,7 @@ export function AlignmentReviewPanel({ compact = false }: { compact?: boolean })
       className={`review-batch-card rounded-xl border ${compact ? 'p-2.5 text-[11px]' : 'p-3 text-[12px]'}`}
     >
       <p className={`font-semibold text-primary ${compact ? 'text-[12px]' : 'text-[13px]'}`}>本批对齐复查</p>
+      {compact ? <AlignmentSessionControls compact className="mt-2" /> : null}
       {debugMode ? (
         <p className="mt-1 text-meta leading-snug">
           英文上下文按本批时间窗口估算；模型仅在窗口内对齐，程序负责校验与写入。
@@ -119,8 +121,8 @@ export function AlignmentReviewPanel({ compact = false }: { compact?: boolean })
       ) : null}
 
       {!debugMode && hasParseWarnings ? (
-        <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-950 dark:text-amber-100">
-          本批有 {parseWarnCount} 条模型返回未能解析，已跳过。可在「设置 → 界面与调试」开启开发者模式查看详情。
+        <p className="review-callout-warning mt-2 rounded-lg px-2 py-1.5 text-[11px]">
+          本批有 {parseWarnCount} 条模型返回格式异常，已跳过。可在「设置 → 界面与调试」开启开发者模式查看详情。
         </p>
       ) : null}
 
@@ -191,8 +193,8 @@ export function AlignmentReviewPanel({ compact = false }: { compact?: boolean })
       </div>
 
       {missing.length > 0 ? (
-        <p className="mt-2 text-[11px] text-amber-800 dark:text-amber-200">
-          未收到本批返回的字幕：<span className="font-mono">{missing.join(', ')}</span>
+        <p className="review-callout-warning review-callout-warning__text mt-2 rounded-lg px-2 py-1.5 text-[11px]">
+          未收到本批返回的字幕：<span className="font-mono tabular-nums">{missing.join(', ')}</span>
         </p>
       ) : null}
 
@@ -286,31 +288,6 @@ export function AlignmentReviewPanel({ compact = false }: { compact?: boolean })
         </p>
       )}
 
-      <div className={`mt-3 flex flex-wrap gap-2`}>
-        {sessionStatus === 'running' ? (
-          <button type="button" className="toolbar-btn toolbar-btn--panel text-[12px]" onClick={() => pauseAlignmentSession()}>
-            暂停对齐
-          </button>
-        ) : null}
-        {sessionStatus === 'paused' ? (
-          <button type="button" className="toolbar-btn toolbar-btn--panel text-[12px]" onClick={() => resumeAlignmentSession()}>
-            继续对齐
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="toolbar-btn toolbar-btn--panel text-[12px]"
-          onClick={() => {
-            if (!window.confirm('停止整文件对齐？已写入的字幕将保留。')) return
-            useAlignmentSessionStore.getState().stopSessionAsUserCancelled()
-          }}
-        >
-          停止整文件
-        </button>
-      </div>
-      <p className="mt-2 text-[11px] text-meta leading-snug">
-        可随时暂停查看本批摘要；停止后已写入结果保留，可调整原稿后重跑。
-      </p>
     </div>
   )
 }

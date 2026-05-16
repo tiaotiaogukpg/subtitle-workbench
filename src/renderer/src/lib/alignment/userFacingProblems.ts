@@ -11,6 +11,7 @@ export function humanizeLooseProblemToken(raw: string): string {
     return raw
   }
 
+  // Legacy：旧 cursor/drift 流程已不再写入，仅兼容历史 problems 展示
   const map: Record<string, string> = {
     alignment_drift: '建议人工复查本行。',
     drift_skip_batch: '建议人工复查本行。',
@@ -26,7 +27,10 @@ export function humanizeLooseProblemToken(raw: string): string {
     missing_subtitle: '本行未收到模型返回，请手动对齐。',
     empty_english: '本行未匹配到英文，请手动对齐。',
     invalid_candidate: '本行候选无效，请重新对齐。',
-    non_contiguous_segments: '关联的英文片段不连续，建议复查。'
+    non_contiguous_segments: '关联的英文片段不连续，建议复查。',
+    structural_writable: '本行对齐结果未通过结构校验，建议复查。',
+    model_parse_warning: '模型返回格式有部分异常，建议复查本批。',
+    writable_structural_candidate: '候选结果未通过校验，建议重试或手动对齐。'
   }
 
   if (map[t]) return map[t]

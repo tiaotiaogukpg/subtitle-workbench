@@ -6,6 +6,7 @@ import { parseMixedTranscript } from './lib/mixedTranscriptParser'
 import { EnglishScriptPoolPanel } from './components/EnglishScriptPoolPanel'
 import { AiAlignmentWorkflowModal } from './components/AiAlignmentWorkflowModal'
 import { AlignmentReviewPanel } from './components/AlignmentReviewPanel'
+import { AlignmentSessionControls } from './components/alignment/AlignmentSessionControls'
 import { AlignmentAttemptsColumn } from './components/alignment/AlignmentAttemptsColumn'
 import { VerticalStackSplitter } from './components/VerticalStackSplitter'
 import { useHistoryStore } from './store/historyStore'
@@ -18,7 +19,15 @@ import {
   markDuplicateAttemptKeys,
   runSingleSubtitleAlignmentRetry,
   startAlignmentSession,
-  suggestBestAttempt
+  suggestBestAttempt,
+  canImportProjectData,
+  canExportProjectData,
+  canStartAiOperation,
+  finishAiOperation,
+  isActiveRun,
+  isAnyAiOperationActive,
+  releaseAiOperationAfterStop,
+  startAiOperation
 } from './lib/alignment'
 import { segmentIdsEqual } from './lib/alignment/subtitleLineUtils'
 import { formatProblemForDisplay } from './lib/alignment/applyPolicy'
@@ -30,6 +39,7 @@ import { selectCurrentSubtitle, useSubtitleStore } from './store/subtitleStore'
 import { useBatchRetrySessionStore } from './store/batchRetrySessionStore'
 import { useUiSettingsStore } from './store/uiSettingsStore'
 import { useAlignmentReviewHotkeys, type AlignmentReviewHotkeyHandlers } from './hooks/useAlignmentReviewHotkeys'
+import { useAlignmentBusyState } from './hooks/useAlignmentBusyState'
 import type { SettingsState, SubtitleStatus } from './types'
 import { DEFAULT_USER_SETTINGS } from '../../shared/settingsDefaults'
 
@@ -122,6 +132,11 @@ function App(): JSX.Element {
   }))
 
   const handleExportBilingualSrt = useCallback(() => {
+    const gate = canExportProjectData()
+    if (!gate.ok) {
+      const proceed = window.confirm(`${gate.reason}\n\n仍要继续导出吗？`)
+      if (!proceed) return
+    }
     downloadBilingualSrt(subtitles, {
       subtitleOrder: settings.subtitleOrder,
       separateLines: settings.separateLines
@@ -133,6 +148,7 @@ function App(): JSX.Element {
   const [alignmentModalOpen, setAlignmentModalOpen] = useState(false)
   const sessionStatus = useAlignmentSessionStore((s) => s.status)
   const alignmentBusy = isAlignmentSessionActive(sessionStatus)
+  const aiTaskBusy = isAnyAiOperationActive()
   const durationMs = subtitles[subtitles.length - 1]?.end ?? 1
 
   useLayoutEffect(() => {
@@ -217,6 +233,11 @@ function App(): JSX.Element {
       const file = input.files?.[0]
       input.value = ''
       if (!file) return
+      const importGate = canImportProjectData()
+      if (!importGate.ok) {
+        window.alert(importGate.reason)
+        return
+      }
       try {
         useHistoryStore.getState().clearUndoHistory()
         const raw = await file.text()
@@ -241,6 +262,11 @@ function App(): JSX.Element {
     const file = input.files?.[0]
     input.value = ''
     if (!file) return
+    const importGate = canImportProjectData()
+    if (!importGate.ok) {
+      window.alert(importGate.reason)
+      return
+    }
     const lower = file.name.toLowerCase()
     if (!lower.endsWith('.txt')) {
       window.alert('当前仅支持导入 .txt 英文原稿。')
@@ -264,6 +290,7 @@ function App(): JSX.Element {
       <main className="app-root app-workbench relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden font-sans text-[13px] leading-normal antialiased">
         <TopBar
           alignmentBusy={alignmentBusy}
+          aiTaskBusy={aiTaskBusy}
           chineseSrtInputRef={chineseSrtInputRef}
           englishTxtInputRef={englishTxtInputRef}
           settingsOpen={settingsOpen}
@@ -336,6 +363,7 @@ function TopBar({
   onOpenAlignment,
   onExportBilingualSrt,
   alignmentBusy,
+  aiTaskBusy,
   chineseSrtInputRef,
   englishTxtInputRef,
   onChineseSrtFileChange,
@@ -346,6 +374,7 @@ function TopBar({
   onOpenAlignment: () => void
   onExportBilingualSrt: () => void
   alignmentBusy: boolean
+  aiTaskBusy: boolean
   chineseSrtInputRef: RefObject<HTMLInputElement | null>
   englishTxtInputRef: RefObject<HTMLInputElement | null>
   onChineseSrtFileChange: (event: ChangeEvent<HTMLInputElement>) => void
@@ -376,7 +405,13 @@ function TopBar({
           aria-hidden
           onChange={onChineseSrtFileChange}
         />
-        <button type="button" className="toolbar-btn" onClick={() => chineseSrtInputRef.current?.click()}>
+        <button
+          type="button"
+          className="toolbar-btn"
+          disabled={aiTaskBusy}
+          title={aiTaskBusy ? 'AI 任务进行中，请稍后再导入' : undefined}
+          onClick={() => chineseSrtInputRef.current?.click()}
+        >
           导入中文 SRT
         </button>
         <input
@@ -388,7 +423,13 @@ function TopBar({
           aria-hidden
           onChange={onEnglishTxtFileChange}
         />
-        <button type="button" className="toolbar-btn" onClick={() => englishTxtInputRef.current?.click()}>
+        <button
+          type="button"
+          className="toolbar-btn"
+          disabled={aiTaskBusy}
+          title={aiTaskBusy ? 'AI 任务进行中，请稍后再导入' : undefined}
+          onClick={() => englishTxtInputRef.current?.click()}
+        >
           导入英文文稿
         </button>
         <button type="button" className="toolbar-btn" onClick={onExportBilingualSrt}>
@@ -538,6 +579,7 @@ function AlignmentWorkspace({
   const removeAiAttempt = useSubtitleStore((s) => s.removeSubtitleAiAttempt)
   const setPreferredSubtitleAttempt = useSubtitleStore((s) => s.setPreferredSubtitleAttempt)
   const [lineRetryBusy, setLineRetryBusy] = useState<'idle' | 'narrow' | 'wide'>('idle')
+  const busy = useAlignmentBusyState(lineRetryBusy)
   const [selectedAttemptIndex, setSelectedAttemptIndex] = useState(0)
   const englishEditorRef = useRef<HTMLTextAreaElement>(null)
   const lineIdRef = useRef<number | null>(null)
@@ -585,9 +627,18 @@ function AlignmentWorkspace({
   }
 
   async function runLineRetry(wide: boolean): Promise<void> {
-    if (!selected || lineRetryBusy !== 'idle' || alignmentSessionBusy) return
-    const br = useBatchRetrySessionStore.getState().status
-    if (br === 'running' || br === 'paused') return
+    if (!selected || lineRetryBusy !== 'idle') return
+    const gate = canStartAiOperation()
+    if (!gate.ok) {
+      window.alert(gate.reason)
+      return
+    }
+    const started = startAiOperation(wide ? 'single_line_wide_retry' : 'single_line_retry')
+    if (!started.ok) {
+      window.alert(started.reason)
+      return
+    }
+    const { operationId } = started
     const lineId = selected.id
     setLineRetryBusy(wide ? 'wide' : 'narrow')
     try {
@@ -600,9 +651,12 @@ function AlignmentWorkspace({
         segments,
         model: alignmentModel,
         confidenceThresholdPct: alignmentConfidenceThreshold,
-        wide
+        wide,
+        guardRunId: operationId
       })
     } finally {
+      if (isActiveRun(operationId)) finishAiOperation(operationId)
+      else releaseAiOperationAfterStop(operationId)
       setLineRetryBusy('idle')
     }
   }
@@ -660,9 +714,12 @@ function AlignmentWorkspace({
         }
       },
       retryLine: (wide) => {
-        const br = useBatchRetrySessionStore.getState().status
-        if (br === 'running' || br === 'paused') return
         if (lineRetryBusy !== 'idle' || busySession) return
+        const gate = canStartAiOperation()
+        if (!gate.ok) return
+        const started = startAiOperation(wide ? 'single_line_wide_retry' : 'single_line_retry')
+        if (!started.ok) return
+        const { operationId } = started
         const lid = lineIdRef.current
         if (lid == null) return
         setLineRetryBusy(wide ? 'wide' : 'narrow')
@@ -677,9 +734,12 @@ function AlignmentWorkspace({
               segments: useScriptPoolStore.getState().segments,
               model: alignmentModel,
               confidenceThresholdPct: thr,
-              wide
+              wide,
+              guardRunId: operationId
             })
           } finally {
+            if (isActiveRun(operationId)) finishAiOperation(operationId)
+            else releaseAiOperationAfterStop(operationId)
             setLineRetryBusy('idle')
           }
         })()
@@ -748,11 +808,11 @@ function AlignmentWorkspace({
           <span className={meta.badgeClass}>{meta.label}</span>
         </div>
         <p className="workspace-phase-strip type-caption mt-2 rounded-md px-2 py-1.5 leading-snug">
-          <span className="workspace-phase-strip__lead font-medium">Phase 4B · Review & Attempts</span>
+          <span className="workspace-phase-strip__lead font-medium">复查与 AI 尝试</span>
           {' · '}
-          快捷键 K/J 队列 · A/D 尝试 · Enter 应用 · R / Shift+R 重试 · M 确认 · E 聚焦英文
+          K/J 队列 · A/D 尝试 · Enter 应用 · R/⇧R 重试 · M 确认 · E 英文
           {' · '}
-          全文件队列 {reviewQueue.length} 条（按风险分排序，仅导航）
+          复查队列 {reviewQueue.length} 条
           {queuePosition ? (
             <>
               {' · '}
@@ -770,6 +830,12 @@ function AlignmentWorkspace({
             </>
           ) : null}
         </p>
+        {busy.taskStatusLabel ? (
+          <div className="task-status-banner mt-2" role="status" aria-live="polite">
+            <p className="font-medium">{busy.taskStatusLabel}</p>
+            {busy.taskStatusDetail ? <p className="task-status-banner__detail">{busy.taskStatusDetail}</p> : null}
+          </div>
+        ) : null}
       </div>
 
       <div
@@ -889,7 +955,7 @@ function AlignmentWorkspace({
             </div>
           </div>
 
-          <section className="rounded-lg border border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] p-3">
+          <section className="surface-subpanel p-3">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <h2 className="type-panel-title">复查队列与重试</h2>
               <span className="type-caption text-meta">{line.aiAttempts?.length ?? 0} 条尝试</span>
@@ -899,6 +965,7 @@ function AlignmentWorkspace({
                 type="button"
                 className="toolbar-btn toolbar-btn--panel text-[12px]"
                 disabled={reviewQueue.length === 0}
+                title={reviewQueue.length === 0 ? '复查队列为空' : '上一条复查项（K）'}
                 onClick={() => goPrevReview()}
               >
                 上一条（队列）
@@ -907,6 +974,7 @@ function AlignmentWorkspace({
                 type="button"
                 className="toolbar-btn toolbar-btn--panel text-[12px]"
                 disabled={reviewQueue.length === 0}
+                title={reviewQueue.length === 0 ? '复查队列为空' : '下一条复查项（J）'}
                 onClick={() => goNextReview()}
               >
                 下一条（队列）
@@ -914,7 +982,14 @@ function AlignmentWorkspace({
               <button
                 type="button"
                 className="toolbar-btn toolbar-btn--panel text-[12px]"
-                disabled={!suggested}
+                disabled={!suggested || busy.anyTaskBusy}
+                title={
+                  busy.anyTaskBusy
+                    ? '有对齐任务进行中'
+                    : !suggested
+                      ? '当前行暂无推荐尝试'
+                      : '应用系统推荐的 AI 尝试'
+                }
                 onClick={() => {
                   if (!suggested) return
                   applyAiAttempt(line.id, suggested.id, alignmentConfidenceThreshold)
@@ -1056,7 +1131,7 @@ function AlignmentStatus({ settings }: { settings: SettingsState }): JSX.Element
           ) : null}
         </div>
 
-        <AlignmentReviewPanel />
+        <AlignmentSessionControls />
 
         <div className="metric-stack space-y-3">
           <Metric
@@ -1139,6 +1214,9 @@ function AlignmentStatus({ settings }: { settings: SettingsState }): JSX.Element
           </div>
         )}
 
+        <div className="alignment-panel__batch-foot">
+          <AlignmentReviewPanel />
+        </div>
       </div>
     </aside>
   )
@@ -1250,7 +1328,7 @@ function TimelineSimulator({
       </div>
 
       <aside className="problems-panel flex min-h-0 min-w-0 flex-col overflow-hidden">
-        <h3 className="ui-section-title shrink-0">Problems</h3>
+        <h3 className="ui-section-title shrink-0">问题清单</h3>
         <div className="mt-2 min-h-0 flex-1 space-y-2 overflow-y-auto overflow-x-hidden">
           {!selected ? (
             <p className="type-caption text-meta px-1 leading-relaxed">无选中字幕行；导入字幕后再查看本行问题。</p>
@@ -1331,12 +1409,7 @@ function SettingsModal({
           <h2 id="settings-modal-title" className="min-w-0 flex-1 truncate text-left text-[16px] font-semibold tracking-tight text-primary">
             设置
           </h2>
-          <button
-            type="button"
-            className="text-meta shrink-0 rounded-lg px-2 text-2xl leading-none hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text-primary)]"
-            onClick={onClose}
-            aria-label="关闭设置"
-          >
+          <button type="button" className="modal-close-btn" onClick={onClose} aria-label="关闭设置">
             ×
           </button>
         </header>

@@ -9,6 +9,7 @@ import {
   pickBestStructuralAIForSubtitle,
   readableProblemsForAIRow
 } from './applyPolicy'
+import { isActiveRun } from './operationGuard'
 import { runAlignmentBatchWithTimeRatioTiers } from './smallBatchPipeline'
 
 export interface RunSingleSubtitleAlignmentRetryInput {
@@ -21,6 +22,8 @@ export interface RunSingleSubtitleAlignmentRetryInput {
   wide: boolean
   /** 覆盖默认 single_retry / wide_retry，用于 batch 等来源标签。 */
   attemptSource?: SubtitleAiAttemptSource
+  /** 由 operationGuard 分配；过期或已 cancel 时不写入 store。 */
+  guardRunId?: number
 }
 
 export type RunSingleSubtitleAlignmentRetryResult =
@@ -33,9 +36,14 @@ export type RunSingleSubtitleAlignmentRetryResult =
 export async function runSingleSubtitleAlignmentRetry(
   input: RunSingleSubtitleAlignmentRetryInput
 ): Promise<RunSingleSubtitleAlignmentRetryResult> {
-  const { line, subtitles, segments, model, confidenceThresholdPct, wide, attemptSource: sourceOverride } = input
+  const { line, subtitles, segments, model, confidenceThresholdPct, wide, attemptSource: sourceOverride, guardRunId } =
+    input
   const source: SubtitleAiAttemptSource =
     sourceOverride ?? (wide ? ('wide_retry' as const) : ('single_retry' as const))
+
+  if (guardRunId !== undefined && !isActiveRun(guardRunId)) {
+    return { ok: false, error: '任务已停止' }
+  }
 
   const result = await runAlignmentBatchWithTimeRatioTiers({
     batch: [line],
@@ -49,7 +57,12 @@ export async function runSingleSubtitleAlignmentRetry(
 
   const tier = result.ok ? result.debug.timeRatioContext?.windowTier : undefined
 
+  if (guardRunId !== undefined && !isActiveRun(guardRunId)) {
+    return { ok: false, error: '任务已停止' }
+  }
+
   const append = (payload: Omit<SubtitleAiAttempt, 'id' | 'createdAt'>): void => {
+    if (guardRunId !== undefined && !isActiveRun(guardRunId)) return
     useSubtitleStore.getState().appendSubtitleAiAttempts([{ subtitleId: line.id, attempt: payload }])
   }
 

@@ -19,8 +19,6 @@ function countWords(s: string): number {
   return s.trim().split(/\s+/).filter(Boolean).length
 }
 
-export { normalizeGroupText } from './textUtils'
-
 /**
  * Debug：纯英文池内每个片段单独成组（无 glue、无多段构造）。
  */

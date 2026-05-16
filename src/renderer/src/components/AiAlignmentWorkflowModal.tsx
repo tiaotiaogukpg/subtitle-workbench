@@ -168,12 +168,7 @@ export function AiAlignmentWorkflowModal({
           >
             AI 整文件对齐
           </h2>
-          <button
-            type="button"
-            className="text-meta shrink-0 rounded-lg px-2 text-2xl leading-none hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text-primary)]"
-            onClick={onClose}
-            aria-label="关闭"
-          >
+          <button type="button" className="modal-close-btn" onClick={onClose} aria-label="关闭">
             ×
           </button>
         </header>

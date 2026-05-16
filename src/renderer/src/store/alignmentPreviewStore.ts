@@ -29,6 +29,8 @@ interface AlignmentPreviewActions {
     debug: AlignmentPreviewDebug
   }) => void
   setRunError: (message: string, debug: AlignmentPreviewDebug | null) => void
+  /** 停止或中断长任务时结束 loading，保留已有预览（若有） */
+  clearRunLoading: () => void
 }
 
 const initial: AlignmentPreviewState = {
@@ -79,5 +81,11 @@ export const useAlignmentPreviewStore = create<AlignmentPreviewState & Alignment
       applyableMatches: null,
       debug: debug ?? s.debug,
       batchSubtitleIds: s.batchSubtitleIds
+    })),
+
+  clearRunLoading: () =>
+    set((s) => ({
+      phase: s.previewMatches?.length ? 'ready' : 'idle',
+      runError: null
     }))
 }))

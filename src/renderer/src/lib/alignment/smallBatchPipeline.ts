@@ -31,11 +31,16 @@ import {
 } from './validation'
 import { applyPostBatchSegmentationPolicy } from './postBatchSegmentationPolicy'
 import { normalizeGroupText } from './textUtils'
+import { useUiSettingsStore } from '../../store/uiSettingsStore'
 import {
   logRetryApiOrParseFailure,
   logRetryContextBeforeDeepSeek,
   logRetryTierModelOutcome
 } from './retryCoverageDiagnostics'
+
+function isAlignmentPipelineDebug(): boolean {
+  return useUiSettingsStore.getState().debugMode
+}
 
 function excerptText(text: string | null | undefined, maxLen: number): string | null {
   const t = text?.trim()
@@ -285,13 +290,20 @@ async function runSingleBatchAttempt(options: {
       ` ${w.reason}` +
       ` · raw≈ ${w.rawItemPreview.slice(0, 200)}${w.rawItemPreview.length > 200 ? '…' : ''}`
   )
-  const validationResult = [...parseWarningLines, ...buildValidationWarnings(validated)]
+  const debugPipeline = isAlignmentPipelineDebug()
+  const validationResult = debugPipeline
+    ? [...parseWarningLines, ...buildValidationWarnings(validated)]
+    : parseWarningLines
   const missingSubtitleIdsInBatch = validated
     .filter((r) => r.validationFlags.includes('missing_subtitle'))
     .map((r) => r.subtitleId)
-  const spanPairDiagnostics = buildSpanPairDiagnostics(validated, batchSubtitleIds)
-  const spanOrderDiagnostics = buildSpanOrderDiagnostics(validated, batchSubtitleIds)
-  const spanResolutionDebugLines = buildSpanResolutionDebugLines(validated)
+  const spanPairDiagnostics = debugPipeline
+    ? buildSpanPairDiagnostics(validated, batchSubtitleIds)
+    : []
+  const spanOrderDiagnostics = debugPipeline
+    ? buildSpanOrderDiagnostics(validated, batchSubtitleIds)
+    : []
+  const spanResolutionDebugLines = debugPipeline ? buildSpanResolutionDebugLines(validated) : []
   const applyable: AlignmentMatchRow[] = []
   for (const id of batchSubtitleIds) {
     const best = pickBestStructuralAIForSubtitle(validated, id)
@@ -465,7 +477,9 @@ export async function runAlignmentBatchWithTimeRatioTiers(
       rawResponse: best.rawResponse,
       validationResult: best.validationResult,
       localEnglishExcerpt,
-      localEnglishContextPlain: excerptText(localEnglishContext.text, 8000),
+      localEnglishContextPlain: isAlignmentPipelineDebug()
+        ? excerptText(localEnglishContext.text, 8000)
+        : undefined,
       timeRatioContext,
       missingSubtitleIdsInBatch: best.missingSubtitleIdsInBatch,
       spanPairDiagnostics: best.spanPairDiagnostics,

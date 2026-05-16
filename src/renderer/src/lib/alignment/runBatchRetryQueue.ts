@@ -8,8 +8,9 @@ function sleep(ms: number): Promise<void> {
 }
 
 export interface BatchRetryLoopCallbacks {
+  /** false = 已 stop 或 runId 失效，不再继续 */
+  shouldContinue: () => boolean
   isPaused: () => boolean
-  isStopRequested: () => boolean
   onLineStart: (subtitleId: number, index: number, total: number) => void
   onLineDone: (subtitleId: number, completed: number, total: number) => void
 }
@@ -23,19 +24,22 @@ export async function runBatchRetryQueue(input: {
   attemptSource: Extract<SubtitleAiAttemptSource, 'batch_retry' | 'batch_wide_retry'>
   model: string
   confidenceThresholdPct: number
+  guardRunId?: number
   callbacks: BatchRetryLoopCallbacks
 }): Promise<'completed' | 'stopped'> {
-  const { targetIds, wide, attemptSource, model, confidenceThresholdPct, callbacks } = input
+  const { targetIds, wide, attemptSource, model, confidenceThresholdPct, guardRunId, callbacks } = input
   const total = targetIds.length
 
   for (let i = 0; i < total; i++) {
-    while (callbacks.isPaused() && !callbacks.isStopRequested()) {
+    while (callbacks.isPaused() && callbacks.shouldContinue()) {
       await sleep(180)
     }
-    if (callbacks.isStopRequested()) return 'stopped'
+    if (!callbacks.shouldContinue()) return 'stopped'
 
     const id = targetIds[i]!
     callbacks.onLineStart(id, i, total)
+
+    if (!callbacks.shouldContinue()) return 'stopped'
 
     const st = useSubtitleStore.getState()
     const line = st.subtitles.find((l) => l.id === id)
@@ -47,13 +51,14 @@ export async function runBatchRetryQueue(input: {
         model,
         confidenceThresholdPct,
         wide,
-        attemptSource
+        attemptSource,
+        guardRunId
       })
     }
 
-    callbacks.onLineDone(id, i + 1, total)
+    if (!callbacks.shouldContinue()) return 'stopped'
 
-    if (callbacks.isStopRequested()) return 'stopped'
+    callbacks.onLineDone(id, i + 1, total)
   }
 
   return 'completed'

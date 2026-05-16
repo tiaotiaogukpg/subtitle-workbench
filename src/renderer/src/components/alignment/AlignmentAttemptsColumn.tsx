@@ -7,7 +7,23 @@ import { segmentIdsEqual } from '../../lib/alignment/subtitleLineUtils'
 import { buildAttemptWordDiff } from '../../lib/text/attemptWordDiff'
 import type { ScriptSegment, SubtitleAiAttempt, SubtitleLine } from '../../types'
 import { ContextAssistFoldable } from './ContextAssistFoldable'
+import { formatProblemForDisplay } from '../../lib/alignment/applyPolicy'
 import { useBatchRetrySessionStore } from '../../store/batchRetrySessionStore'
+
+function retryDisabledTitle(input: {
+  alignmentSessionBusy: boolean
+  batchRunActive: boolean
+  batchStatus: string
+  lineRetryBusy: 'idle' | 'narrow' | 'wide'
+}): string | undefined {
+  if (input.alignmentSessionBusy) return '整文件 AI 对齐进行中，请稍后再试'
+  if (input.batchRunActive) {
+    return input.batchStatus === 'paused' ? '批量重试已暂停，请先停止或等待结束' : '批量重试进行中'
+  }
+  if (input.lineRetryBusy === 'narrow') return '本行重试进行中'
+  if (input.lineRetryBusy === 'wide') return '本行扩窗重试进行中'
+  return undefined
+}
 
 function isAttemptApplied(line: SubtitleLine, att: SubtitleAiAttempt): boolean {
   if (normalizeAttemptEnglishKey(att.english) !== normalizeAttemptEnglishKey(line.english)) return false
@@ -17,15 +33,17 @@ function isAttemptApplied(line: SubtitleLine, att: SubtitleAiAttempt): boolean {
 function formatAttemptSource(source: string): string {
   switch (source) {
     case 'batch_retry':
-      return 'batch retry'
+      return '批量重试'
     case 'batch_wide_retry':
-      return 'batch wide'
+      return '批量扩窗'
     case 'single_retry':
-      return 'single retry'
+      return '单行重试'
     case 'wide_retry':
-      return 'wide retry'
+      return '扩窗重试'
+    case 'alignment':
+      return '首次对齐'
     default:
-      return source
+      return '其它来源'
   }
 }
 
@@ -193,6 +211,12 @@ export function AlignmentAttemptsColumn({
   const batchRunActive = batchStatus === 'running' || batchStatus === 'paused'
   const batchFinished = batchStatus === 'completed' || batchStatus === 'stopped'
   const retryDisabled = lineRetryBusy !== 'idle' || alignmentSessionBusy || batchRunActive
+  const retryTitle = retryDisabledTitle({
+    alignmentSessionBusy,
+    batchRunActive,
+    batchStatus,
+    lineRetryBusy
+  })
 
   const attemptCount = attemptsSorted.length
   const showAttemptCountTitle = attemptCount > 3
@@ -216,35 +240,33 @@ export function AlignmentAttemptsColumn({
       <header className="phase4b-header ai-attempts-panel__header shrink-0">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h2 className="ai-attempts-panel__title">
-            {showAttemptCountTitle
-              ? `AI Attempts · ${attemptCount} 次尝试`
-              : 'Phase 4B · AI Attempts'}
+            {showAttemptCountTitle ? `AI 尝试 · ${attemptCount} 条` : 'AI 尝试'}
           </h2>
           {!showAttemptCountTitle ? (
             <span className="ai-attempts-panel__count">{attemptCount} 条</span>
           ) : null}
         </div>
         <p className="ai-attempts-panel__hint mb-2 leading-snug">
-          键盘 A / D 切换选中；Enter 应用选中；与当前应用一致的尝试会高亮。
+          A/D 切换 · Enter 应用 · 与当前英文一致会高亮
         </p>
         <div className="ai-attempts-panel__strategy flex flex-wrap items-center gap-2">
           <button
           type="button"
           className="ai-attempt-btn px-3 py-1.5 text-[12px]"
           disabled={retryDisabled}
-          title="较窄英文上下文再请求模型（tier 1–3），仅追加 attempt，需手动 Apply"
+          title={retryTitle ?? '较窄上下文重试，仅追加尝试，需手动应用'}
           onClick={() => onRetryNarrow()}
         >
-          {lineRetryBusy === 'narrow' ? '重试中…' : 'Retry'}
+          {lineRetryBusy === 'narrow' ? '重试中…' : '重试'}
         </button>
         <button
           type="button"
           className="ai-attempt-btn ai-attempt-btn--wide-retry px-3 py-1.5 text-[12px]"
           disabled={retryDisabled}
-          title="使用更大的英文上下文重新尝试对齐（tier 3/4），仅追加 attempt，需手动 Apply"
+          title={retryTitle ?? '更大英文上下文重试，仅追加尝试，需手动应用'}
           onClick={() => onRetryWide()}
         >
-          {lineRetryBusy === 'wide' ? '扩窗重试中…' : 'Wide Retry'}
+          {lineRetryBusy === 'wide' ? '扩窗重试中…' : '扩窗重试'}
         </button>
         <span className="ai-attempts-panel__sep" aria-hidden>
           |
@@ -252,8 +274,8 @@ export function AlignmentAttemptsColumn({
         <button
           type="button"
           className="ai-attempt-btn px-3 py-1.5 text-[12px]"
-          disabled={retryDisabled || batchRunActive || alignmentSessionBusy}
-          title="对复查队列中符合条件的行串行追加 batch_retry attempts，不自动应用"
+          disabled={retryDisabled}
+          title={retryTitle ?? '对复查队列串行重试，仅追加尝试'}
           onClick={() =>
             void startBatchRetry({
               wide: false,
@@ -262,13 +284,13 @@ export function AlignmentAttemptsColumn({
             })
           }
         >
-          Batch Retry
+          批量重试
         </button>
         <button
           type="button"
           className="ai-attempt-btn ai-attempt-btn--wide-retry px-3 py-1.5 text-[12px]"
-          disabled={retryDisabled || batchRunActive || alignmentSessionBusy}
-          title="对复查队列中符合条件的行串行追加 batch_wide_retry attempts（大上下文），不自动应用"
+          disabled={retryDisabled}
+          title={retryTitle ?? '对复查队列串行扩窗重试，仅追加尝试'}
           onClick={() =>
             void startBatchRetry({
               wide: true,
@@ -277,7 +299,7 @@ export function AlignmentAttemptsColumn({
             })
           }
         >
-          Batch Wide Retry
+          批量扩窗
           </button>
         </div>
       </header>
@@ -286,11 +308,11 @@ export function AlignmentAttemptsColumn({
         <ContextAssistFoldable subtitles={subtitles} line={line} segments={segments} />
 
         {batchRunActive || batchFinished || batchLastError ? (
-        <div className="batch-retry-panel mb-3 rounded-md border border-[rgba(255,255,255,0.1)] bg-[rgba(0,0,0,0.2)] px-3 py-2 text-[11px] leading-snug text-[rgba(255,255,255,0.72)]">
+        <div className="batch-retry-panel mb-3 rounded-md px-3 py-2 text-[11px] leading-snug">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span>
               进度{' '}
-              <span className="tabular-nums font-semibold text-[rgba(255,255,255,0.88)]">
+              <span className="batch-retry-panel__emph tabular-nums font-semibold">
                 {batchCompleted}/{batchTotal || 0}
               </span>
               {batchCurrentId != null ? (
@@ -300,8 +322,9 @@ export function AlignmentAttemptsColumn({
                 </>
               ) : null}
             </span>
-            <span className="text-[rgba(255,255,255,0.5)]">
-              模式 {batchWide ? 'batch_wide_retry' : 'batch_retry'}
+            <span className="batch-retry-panel__meta">
+              {batchWide ? '扩窗批量' : '标准批量'}
+              {batchStatus === 'paused' ? ' · 已暂停' : batchStatus === 'stopped' ? ' · 已停止' : ''}
             </span>
           </div>
           {batchTotal > 0 ? (
@@ -313,30 +336,30 @@ export function AlignmentAttemptsColumn({
             </div>
           ) : null}
           {batchTruncated ? (
-            <p className="mt-1.5 text-[10px] text-amber-200/85">
+            <p className="batch-retry-panel__warn mt-1.5 text-[10px]">
               本批已截断至 {batchTotal} 条（符合条件共 {batchRawCount} 条）
             </p>
           ) : null}
-          {batchLastError ? <p className="mt-1.5 text-[11px] text-red-300/95">{batchLastError}</p> : null}
+          {batchLastError ? <p className="batch-retry-panel__error mt-1.5 text-[11px]">{batchLastError}</p> : null}
           {batchFinished && !batchLastError ? (
-            <p className="mt-1.5 text-[11px] text-emerald-200/85">
-              {batchStatus === 'completed' ? '本批已完成（仅追加 attempts，请自行 Compare / Apply）' : '已停止'}
+            <p className="batch-retry-panel__ok mt-1.5 text-[11px]">
+              {batchStatus === 'completed' ? '本批已完成，请自行对比并应用' : '已停止'}
             </p>
           ) : null}
           <div className="mt-2 flex flex-wrap gap-1.5">
             {batchStatus === 'running' ? (
               <button type="button" className="ai-attempt-btn px-2 py-1 text-[11px]" onClick={() => requestPause()}>
-                Pause
+                暂停
               </button>
             ) : null}
             {batchStatus === 'paused' ? (
               <button type="button" className="ai-attempt-btn px-2 py-1 text-[11px]" onClick={() => requestResume()}>
-                Resume
+                继续
               </button>
             ) : null}
             {batchRunActive ? (
               <button type="button" className="ai-attempt-btn px-2 py-1 text-[11px]" onClick={() => requestStop()}>
-                Stop
+                停止
               </button>
             ) : null}
             {batchFinished || batchLastError ? (
@@ -409,12 +432,12 @@ export function AlignmentAttemptsColumn({
                   {att.contextTier != null ? <span>tier {att.contextTier}</span> : null}
                   <span>{att.confidence}%</span>
                   {isPick ? <span className="ai-attempt-card__pick">推荐</span> : null}
-                  {isDup ? <span className="ai-attempt-card__dup">duplicate</span> : null}
+                  {isDup ? <span className="ai-attempt-card__dup">与其它尝试重复</span> : null}
                 </div>
                 {att.problems.length > 0 ? (
                   <ul className="ai-attempt-card__problems mt-1 list-inside list-disc text-[11px]">
                     {att.problems.slice(0, 5).map((p: string, i: number) => (
-                      <li key={i}>{p}</li>
+                      <li key={i}>{formatProblemForDisplay(p)}</li>
                     ))}
                   </ul>
                 ) : null}
@@ -429,14 +452,14 @@ export function AlignmentAttemptsColumn({
                   disabled={!att.english.trim()}
                   onClick={() => applyAiAttempt(line.id, att.id, alignmentConfidenceThreshold)}
                 >
-                  Apply
+                  应用
                 </button>
                 <button
                   type="button"
                   className="ai-attempt-btn px-2 py-1 text-[11px]"
                   onClick={() => setCompareAttemptId(att.id)}
                 >
-                  Compare
+                  对比
                 </button>
                 <button
                   type="button"
@@ -451,14 +474,14 @@ export function AlignmentAttemptsColumn({
                   }
                   onClick={() => removeAiAttempt(line.id, att.id)}
                 >
-                  Delete
+                  删除
                 </button>
                 <button
                   type="button"
                   className={`ai-attempt-btn px-2 py-1 text-[11px]${isPinned ? ' ai-attempt-btn--pinned' : ''}`}
                   onClick={() => setPreferredAttempt(line.id, isPinned ? null : att.id)}
                 >
-                  {isPinned ? 'Unpin' : 'Pin'}
+                  {isPinned ? '取消固定' : '固定'}
                 </button>
               </div>
             </li>

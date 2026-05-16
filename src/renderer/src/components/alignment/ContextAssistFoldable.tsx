@@ -63,7 +63,7 @@ export function ContextAssistFoldable({ subtitles, line, segments }: ContextAssi
     <div className="context-assist-foldable mb-3" data-review-hotkeys="true">
       <div className="context-assist-foldable__bar">
         <div className="context-assist-foldable__summary-wrap">
-          <span className="context-assist-foldable__label">Context</span>
+          <span className="context-assist-foldable__label">上下文</span>
           <span className="context-assist-foldable__summary" title={summary}>
             {summary}
           </span>
