@@ -66,6 +66,11 @@ export function splitEnglishSentences(text: string): string[] {
   return parts.length > 0 ? parts : [t]
 }
 
+/** 与 `splitEnglishSentences` 等价；保留别名供旧代码引用。 */
+export function splitEnglishSegments(text: string): string[] {
+  return splitEnglishSentences(text)
+}
+
 /** 中文句切分：`。！？` 后可无空格。 */
 export function splitChineseSentences(text: string): string[] {
   const t = text.trim()
@@ -99,7 +104,7 @@ function newSegment(
  * - 空行不产生 segment。
  * - `speaker` → `language: unknown`，`used: false`。
  * - `mixed` 整行一条，不切句。
- * - `english` / `chinese` 在单行内按各自句末标点切分；子句共享同一 `sourceLine`。
+ * - `english` / `chinese`：单行内按各自句末标点切分；子句共享同一 `sourceLine`。
  */
 export function parseMixedTranscript(raw: string): ScriptSegment[] {
   const normalized = raw.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')

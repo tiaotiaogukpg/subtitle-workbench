@@ -46,10 +46,10 @@ export function EnglishScriptPoolPanel(): JSX.Element {
   return (
     <aside className="app-panel script-pool-panel flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
       <div className="app-panel-header script-pool-panel__head shrink-0 px-3 py-2">
-        <h2 className="ui-section-title">Script Pool</h2>
-        <p className="type-caption mt-0.5">
-          {segments.length} 条
-          {listFilter !== 'all' ? ` · 显示 ${visible.length}` : null}
+        <h2 className="ui-section-title">英文原稿</h2>
+        <p className="type-caption script-pool-panel__caption mt-0.5">
+          Script pool · {segments.length} 条
+          {listFilter !== 'all' ? ` · 显示 ${visible.length}` : ''}
         </p>
         <div className="script-pool-filter mt-2 flex flex-wrap gap-1.5" role="toolbar" aria-label="脚本池筛选">
           {FILTER_OPTIONS.map((opt) => {
@@ -69,68 +69,72 @@ export function EnglishScriptPoolPanel(): JSX.Element {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto overflow-x-hidden p-2">
+      <div className="script-pool-panel__scroll min-h-0 flex-1 space-y-2 overflow-y-auto overflow-x-hidden p-2">
         {segments.length === 0 ? (
-          <div className="type-caption text-meta rounded-lg border border-dashed border-[var(--color-border-subtle)] px-3 py-6 text-center leading-relaxed">
+          <div className="type-caption script-pool-empty rounded-lg border border-dashed px-3 py-6 text-center leading-relaxed">
             暂无原稿脚本
-            <span className="mt-1 block text-[12px] text-[var(--color-text-meta)]">
-              使用工具栏「导入英文文稿」载入 .txt（支持中英混排、说话人行等）
-            </span>
+            <span className="script-pool-empty__hint mt-1 block">使用工具栏「导入英文文稿」载入 .txt（支持中英混排、说话人行等）</span>
           </div>
         ) : visible.length === 0 ? (
-          <div className="type-caption text-meta rounded-lg border border-dashed border-[var(--color-border-subtle)] px-3 py-6 text-center leading-relaxed">
+          <div className="type-caption script-pool-empty rounded-lg border border-dashed px-3 py-6 text-center leading-relaxed">
             当前筛选下无条目
-            <span className="mt-1 block text-[12px] text-[var(--color-text-meta)]">请切换筛选或导入其它内容</span>
+            <span className="script-pool-empty__hint mt-1 block">请切换筛选或导入其它内容</span>
           </div>
         ) : (
           visible.map((seg, index) => {
             const displayIndex = index + 1
             const isSelected = seg.id === selectedSegmentId
 
+            const isDimmed = seg.language === 'english' && !seg.used
+
             return (
-              <button
+              <div
                 key={seg.id}
-                type="button"
-                className={`script-pool-item${isSelected ? ' script-pool-item--selected' : ''}`}
-                title={
-                  seg.language === 'english'
-                    ? seg.used
-                      ? '默认参与假 AI 英文候选（按 EN 顺序推进）'
-                      : '纯英文片段；当前未标为对齐池（used）'
-                    : seg.language === 'chinese' || seg.language === 'mixed'
-                      ? '仅作对齐上下文展示；假 AI 候选不使用'
-                      : seg.language === 'unknown' && isDigitLikeAlignableScript(seg.text)
-                        ? '纯数字（无汉字）可与假 AI 英文流一并顺序消费；重新导入后将标为 EN'
-                        : '假 AI 对齐不使用此类片段'
-                }
-                onClick={() => selectSegment(isSelected ? null : seg.id)}
+                className={`script-pool-item${isSelected ? ' script-pool-item--selected' : ''}${isDimmed ? ' script-pool-item--dim' : ''}`}
               >
-                <div className="flex w-full flex-wrap items-center justify-between gap-2">
-                  <span className="type-nav-id tabular-nums">#{String(displayIndex).padStart(3, '0')}</span>
-                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
-                    <span className={languageBadgeClass(seg.language)}>{languageBadgeLabel(seg.language)}</span>
-                    {hasChineseChars(seg.text) && seg.language === 'english' ? (
-                      <span className="script-pool-context-tag" title="含中文：不进入 DeepSeek 英文候选池">
-                        MIX
-                      </span>
-                    ) : null}
-                    {seg.language === 'english' && !hasChineseChars(seg.text) && !isPureEnglishSegment(seg.text) ? (
-                      <span className="script-pool-context-tag" title="非纯英文：不进入 DeepSeek 英文候选池">
-                        Context
-                      </span>
-                    ) : null}
-                    {seg.language === 'chinese' || seg.language === 'mixed' ? (
-                      <span className="script-pool-context-tag" title="Context only — fake AI alignment does not use this line">
-                        上下文
-                      </span>
-                    ) : null}
+                <button
+                  type="button"
+                  className="script-pool-item__hit"
+                  title={
+                    seg.language === 'english'
+                      ? seg.used
+                        ? '默认参与英文对齐候选池'
+                        : '纯英文片段；当前未标为对齐池（used）'
+                      : seg.language === 'chinese' || seg.language === 'mixed'
+                        ? '仅作对齐上下文；不参与英文候选池'
+                        : seg.language === 'unknown' && isDigitLikeAlignableScript(seg.text)
+                          ? '纯数字（无汉字）可对齐；重新导入后将标为 EN'
+                          : '不参与英文候选池'
+                  }
+                  onClick={() => selectSegment(isSelected ? null : seg.id)}
+                >
+                  <div className="flex w-full flex-wrap items-center justify-between gap-2">
+                    <span className="type-nav-id tabular-nums">#{String(displayIndex).padStart(3, '0')}</span>
+                    <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+                      <span className={languageBadgeClass(seg.language)}>{languageBadgeLabel(seg.language)}</span>
+                      {hasChineseChars(seg.text) && seg.language === 'english' ? (
+                        <span className="script-pool-context-tag" title="含中文：不进入英文候选池">
+                          MIX
+                        </span>
+                      ) : null}
+                      {seg.language === 'english' && !hasChineseChars(seg.text) && !isPureEnglishSegment(seg.text) ? (
+                        <span className="script-pool-context-tag" title="非纯英文：不进入英文候选池">
+                          Context
+                        </span>
+                      ) : null}
+                      {seg.language === 'chinese' || seg.language === 'mixed' ? (
+                        <span className="script-pool-context-tag" title="仅作上下文，不进入英文候选池">
+                          上下文
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
-                </div>
-                <span className="type-caption text-meta mt-0.5 block text-left">L{seg.sourceLine}</span>
-                <span className="script-pool-item__text mt-1 block text-left leading-snug text-[var(--color-text-primary)]">
-                  {shortPreview(seg.text)}
-                </span>
-              </button>
+                  <span className="type-caption script-pool-item__line-no mt-0.5 block text-left">L{seg.sourceLine}</span>
+                  <span className="script-pool-item__text mt-1 block text-left leading-snug">
+                    {shortPreview(seg.text)}
+                  </span>
+                </button>
+              </div>
             )
           })
         )}

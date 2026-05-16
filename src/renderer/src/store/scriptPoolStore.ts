@@ -11,9 +11,7 @@ export interface ScriptPoolStoreActions {
   setSegments: (segments: ScriptSegment[]) => void
   selectSegment: (id: string | null) => void
   setListFilter: (filter: ScriptPoolListFilter) => void
-  /** 假 AI 对齐消费过的英文片段标记为 used；绝不修改 chinese / mixed / unknown。 */
-  markEnglishSegmentsUsedByFakeAlignment: (segmentIds: string[]) => void
-  /** 真实对齐：将匹配到的英文/混合片段标记为已使用。 */
+  /** 将匹配到的英文/混合片段标记为已使用。 */
   markSegmentsUsedForAlignment: (segmentIds: string[]) => void
   clear: () => void
 }
@@ -30,17 +28,6 @@ export const useScriptPoolStore = create<ScriptPoolStore>((set) => ({
   selectSegment: (id) => set({ selectedSegmentId: id }),
 
   setListFilter: (listFilter) => set({ listFilter }),
-
-  markEnglishSegmentsUsedByFakeAlignment: (segmentIds) =>
-    set((s) => {
-      if (segmentIds.length === 0) return s
-      const idSet = new Set(segmentIds)
-      return {
-        segments: s.segments.map((seg) =>
-          idSet.has(seg.id) && seg.language === 'english' ? { ...seg, used: true } : seg
-        )
-      }
-    }),
 
   markSegmentsUsedForAlignment: (segmentIds) =>
     set((s) => {
